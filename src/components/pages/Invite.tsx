@@ -207,13 +207,13 @@ export default function Invite() {
       <div className="hidden lg:flex items-center justify-center bg-gradient-to-br from-blue-900 to-purple-900 text-white px-10">
         <div className="space-y-6 max-w-md">
           <div className="flex items-center space-x-3">
-            <h1 className="text-2xl font-semibold tracking-wide p-2 px-4 border rounded-xl">BergFlow</h1>
+            <h1 className="text-2xl font-semibold tracking-wide p-2 px-4 border rounded-xl">Anvesana</h1>
           </div>
           <h2 className="text-4xl font-bold leading-tight">
             Welcome to the team!
           </h2>
           <p className="text-lg text-slate-200">
-            You've been invited to join BergFlow, the AI-powered workspace for efficient, scalable data annotation.
+            You've been invited to join Anvesana, the AI-powered workspace for efficient, scalable data annotation.
           </p>
         </div>
       </div>
@@ -225,7 +225,7 @@ export default function Invite() {
             <CheckCircle className="h-12 w-12 text-green-500 mx-auto mb-4" />
             <CardTitle className="text-2xl">You're Invited!</CardTitle>
             <CardDescription>
-              Join BergFlow and start collaborating with your team
+              Join Anvesana and start collaborating with your team
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">

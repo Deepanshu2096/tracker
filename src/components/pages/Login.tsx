@@ -38,13 +38,13 @@ export default function Login() {
       <div className="hidden lg:flex items-center justify-center bg-gradient-to-br from-blue-900 to-purple-900 text-white px-10">
         <div className="space-y-6 max-w-md">
           <div className="flex items-center space-x-3">
-            <h1 className="text-2xl font-semibold tracking-wide p-2 px-4 border rounded-xl">BergFlow</h1>
+            <h1 className="text-2xl font-semibold tracking-wide p-2 px-4 border rounded-xl">Anvesana</h1>
           </div>
           <h2 className="text-4xl font-bold leading-tight">
-            Annotate smarter, not harder.
+          Anvesana 
           </h2>
           <p className="text-lg text-slate-200">
-            BergFlow is your AI-powered workspace for efficient, scalable data annotation. built for speed, precision, and teams that move fast.
+
           </p>
         </div>
       </div>

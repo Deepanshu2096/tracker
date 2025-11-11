@@ -249,13 +249,13 @@ export default function Signup() {
       <div className="hidden lg:flex items-center justify-center bg-gradient-to-br from-blue-900 to-purple-900 text-white px-10">
         <div className="space-y-6 max-w-md">
           <div className="flex items-center space-x-3">
-            <h1 className="text-2xl font-semibold tracking-wide p-2 px-4 border rounded-xl">BergFlow</h1>
+            <h1 className="text-2xl font-semibold tracking-wide p-2 px-4 border rounded-xl">Anvesana</h1>
           </div>
           <h2 className="text-4xl font-bold leading-tight">
             Join the team!
           </h2>
           <p className="text-lg text-slate-200">
-            Create your account and start collaborating with your team on BergFlow, the AI-powered workspace for efficient, scalable data annotation.
+            Create your account and start collaborating with your team on Anvesana, the AI-powered workspace for efficient, scalable data annotation.
           </p>
         </div>
       </div>
@@ -267,7 +267,7 @@ export default function Signup() {
             <UserPlus className="h-12 w-12 text-purple-500 mx-auto mb-4" />
             <CardTitle className="text-2xl">Create Your Account</CardTitle>
             <CardDescription>
-              Complete your registration to join BergFlow
+              Complete your registration to join Anvesana
             </CardDescription>
           </CardHeader>
           <CardContent>

@@ -1,16 +1,8 @@
-import {
-	BadgeCheck,
-	Bell,
-	ChevronsUpDown,
-	CreditCard,
-	LogOut,
-	Sparkles,
-} from "lucide-react"
+import { ChevronsUpDown, LogOut } from "lucide-react"
 
 import {
 	Avatar,
 	AvatarFallback,
-	AvatarImage,
 } from "@/components/ui/avatar"
 import {
 	DropdownMenu,
@@ -39,14 +31,12 @@ import {
 	AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
 // import { AccountDialog } from "./AccountDialog"
-import { useState } from "react"
 import { useAuth } from "@/hooks/useAuth.tsx"
 
 
 export function NavUser() {
 	const { isMobile } = useSidebar()
 	const { user, signOut } = useAuth()
-	const [accountDialogOpen, setAccountDialogOpen] = useState(false)
 
 	return (
 		<>
@@ -101,16 +91,25 @@ export function NavUser() {
 							</DropdownMenuContent>
 						</DropdownMenu>
 					</SidebarMenuItem>
-					<AlertDialogContent>
+					<AlertDialogContent className="bg-slate-900/95 text-white border border-slate-700">
 						<AlertDialogHeader>
-							<AlertDialogTitle>Are you sure you want to logout?</AlertDialogTitle>
-							<AlertDialogDescription>
+							<AlertDialogTitle className="text-white">
+								Are you sure you want to logout?
+							</AlertDialogTitle>
+							<AlertDialogDescription className="text-slate-300">
 								You will be logged out of your account and redirected to the login page.
 							</AlertDialogDescription>
 						</AlertDialogHeader>
-						<AlertDialogFooter>
-							<AlertDialogCancel>Cancel</AlertDialogCancel>
-							<AlertDialogAction onClick={signOut}>Continue</AlertDialogAction>
+						<AlertDialogFooter className="sm:flex-row sm:justify-end gap-2">
+							<AlertDialogCancel className="bg-slate-700 text-white hover:bg-slate-600 border-0">
+								Cancel
+							</AlertDialogCancel>
+							<AlertDialogAction
+								className="bg-rose-500 text-white hover:bg-rose-500/90"
+								onClick={signOut}
+							>
+								Continue
+							</AlertDialogAction>
 						</AlertDialogFooter>
 					</AlertDialogContent>
 

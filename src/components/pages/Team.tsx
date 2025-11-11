@@ -15,7 +15,7 @@ export default function Team() {
           People &amp; Culture
         </p>
         <h1 className="text-4xl font-semibold tracking-tight text-primary">
-          Meet the BergFlow Team
+          Meet the Anvesana Team
         </h1>
         <p className="text-sm text-muted-foreground max-w-xl">
           We’re a group of builders, researchers, and operators focused on
@@ -49,7 +49,7 @@ export default function Team() {
       <footer className="rounded-xl border border-dashed border-muted-foreground/30 bg-muted/50 p-6 space-y-2">
         <h3 className="text-lg font-semibold text-primary">Hiring soon</h3>
         <p className="text-sm text-muted-foreground">
-          The full team management experience will live here once the BergFlow
+          The full team management experience will live here once the Anvesana
           desktop agent starts streaming activity data.
         </p>
       </footer>

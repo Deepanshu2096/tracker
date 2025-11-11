@@ -1,3 +1,5 @@
+@import "tailwindcss";
+
 :root {
   font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont,
     'Helvetica Neue', Arial, sans-serif;

@@ -73,7 +73,7 @@ export default function LoginForm() {
   return (
     <Card className="backdrop-blur-md bg-white/60 dark:bg-slate-900/50 shadow-xl border border-border">
       <CardHeader className="text-center space-y-2 pb-4">
-        <CardTitle className="text-2xl font-bold tracking-tight">Sign in to BergFlow</CardTitle>
+        <CardTitle className="text-2xl font-bold tracking-tight">Sign in to Anvesana</CardTitle>
       </CardHeader>
 
       <CardContent>
@@ -83,7 +83,7 @@ export default function LoginForm() {
             <Input
               id="email"
               type="email"
-              placeholder="you@bergflow.ai"
+              placeholder="Enter your email"
               {...register('email')}
               className={errors.email && 'border-red-500'}
             />

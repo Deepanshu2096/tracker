@@ -1,6 +1,6 @@
 import { Link, Outlet, useLocation } from "react-router-dom";
 import { SidebarProvider, Sidebar, SidebarHeader, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarMenu, SidebarMenuItem, SidebarMenuButton, SidebarFooter, SidebarTrigger } from "@/components/ui/sidebar";
-import { Users, LayoutDashboard, Fingerprint } from "lucide-react";
+import { Users, LayoutDashboard, Fingerprint, Clock } from "lucide-react";
 import { NavUser } from "@/components/nav-user";
 import { ROUTES_FRONTEND } from "@/constant";
 import { useAuth } from "@/hooks/useAuth";
@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 const menuItems = [
   { title: "Dashboard", id: "dashboard", icon: LayoutDashboard, path: ROUTES_FRONTEND.DASHBOARD },
   { title: "Team", id: "team", icon: Users, path: ROUTES_FRONTEND.TEAM },
+  { title: "Time Tracking", id: "time-tracking", icon: Clock, path: ROUTES_FRONTEND.TIME_TRACKING },
 ];
 
 function AppSidebar() {
@@ -23,10 +24,10 @@ function AppSidebar() {
           </div>
           <div className="leading-tight">
             <span className="block text-lg font-semibold text-foreground">
-              BergFlow
+              Anvesana
             </span>
             <span className="text-[0.65rem] uppercase tracking-[0.32em] text-muted-foreground">
-              by BergAI
+              by Anvesana
             </span>
           </div>
         </div>
