@@ -9,6 +9,7 @@ import Layout from './components/utils/Layout';
 import Dashboard from './components/pages/Dashboard'
 import Team from './components/pages/Team';
 import TimeTracking from './components/pages/TimeTracking';
+import ActivityLogs from './components/pages/ActivityLogs';
 
 import { PrivateRoute } from './components/utils/PrivateRoute';
 
@@ -45,6 +46,10 @@ export const router = createBrowserRouter([
           {
             path: ROUTES_FRONTEND.TIME_TRACKING,
             element: <TimeTracking />,
+          },
+          {
+            path: ROUTES_FRONTEND.ACTIVITY_LOGS,
+            element: <ActivityLogs />,
           },
           {
             path: "*",

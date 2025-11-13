@@ -17,6 +17,7 @@ import {
   Card,
   CardContent,
   CardDescription,
+  CardFooter,
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
@@ -142,6 +143,10 @@ const TimeTracking = () => {
   const [adminRecentSessions, setAdminRecentSessions] = useState<WorkSessionRecord[]>([]);
   const [adminActivityLogs, setAdminActivityLogs] = useState<ActivityLogRecord[]>([]);
   const [profilesDirectory, setProfilesDirectory] = useState<Record<string, ProfileRecord>>({});
+  const [adminRecentSessionsPage, setAdminRecentSessionsPage] = useState(0);
+  const [adminRecentSessionsTotal, setAdminRecentSessionsTotal] = useState(0);
+  const [adminActivityLogsPage, setAdminActivityLogsPage] = useState(0);
+  const [adminActivityLogsTotal, setAdminActivityLogsTotal] = useState(0);
 
   const [sessionNotes, setSessionNotes] = useState('');
 
@@ -190,6 +195,8 @@ const TimeTracking = () => {
         return <MoreHorizontal className={className} />;
     }
   };
+
+  const ADMIN_PAGE_SIZE = 8;
 
   const fetchProfile = useCallback(async () => {
     if (!user?.id) return null;
@@ -278,41 +285,54 @@ const TimeTracking = () => {
   );
 
   const fetchAdminData = useCallback(async () => {
-    const [{ data: allProfiles, error: profilesError }, { data: activeSessions, error: activeSessionsError }, { data: recentSessions, error: recentSessionsError }, { data: activityLogs, error: activityLogsError }] =
-      await Promise.all([
-        supabase
-          .from('profiles')
-          .select('id, full_name, email, role')
-          .order('full_name', { ascending: true }),
-        supabase
-          .from('work_sessions')
-          .select('id, user_id, started_at, ended_at, duration_seconds, status, notes')
-          .eq('status', 'open')
-          .order('started_at', { ascending: false }),
-        supabase
-          .from('work_sessions')
-          .select('id, user_id, started_at, ended_at, duration_seconds, status, notes')
-          .order('started_at', { ascending: false })
-          .limit(50),
-        supabase
-          .from('activity_logs')
-          .select('id, actor_id, target_user_id, action, metadata, created_at')
-          .order('created_at', { ascending: false })
-          .limit(50),
-      ]);
+    const [profilesRes, activeSessionsRes, recentSessionsRes, activityLogsRes] = await Promise.all([
+      supabase
+        .from('profiles')
+        .select('id, full_name, email, role')
+        .order('full_name', { ascending: true }),
+      supabase
+        .from('work_sessions')
+        .select('id, user_id, started_at, ended_at, duration_seconds, status, notes')
+        .eq('status', 'open')
+        .order('started_at', { ascending: false }),
+      supabase
+        .from('work_sessions')
+        .select('id, user_id, started_at, ended_at, duration_seconds, status, notes', { count: 'exact' })
+        .order('started_at', { ascending: false })
+        .range(
+          adminRecentSessionsPage * ADMIN_PAGE_SIZE,
+          adminRecentSessionsPage * ADMIN_PAGE_SIZE + ADMIN_PAGE_SIZE - 1
+        ),
+      supabase
+        .from('activity_logs')
+        .select('id, actor_id, target_user_id, action, metadata, created_at', { count: 'exact' })
+        .order('created_at', { ascending: false })
+        .range(
+          adminActivityLogsPage * ADMIN_PAGE_SIZE,
+          adminActivityLogsPage * ADMIN_PAGE_SIZE + ADMIN_PAGE_SIZE - 1
+        ),
+    ]);
 
-    if (profilesError) throw profilesError;
-    if (activeSessionsError) throw activeSessionsError;
-    if (recentSessionsError) throw recentSessionsError;
-    if (activityLogsError) throw activityLogsError;
+    if (profilesRes.error) throw profilesRes.error;
+    if (activeSessionsRes.error) throw activeSessionsRes.error;
+    if (recentSessionsRes.error) throw recentSessionsRes.error;
+    if (activityLogsRes.error) throw activityLogsRes.error;
 
-    const directory = Object.fromEntries((allProfiles ?? []).map((item) => [item.id, item]));
+    const directory = Object.fromEntries((profilesRes.data ?? []).map((item) => [item.id, item]));
 
     setProfilesDirectory(directory);
-    setAdminActiveSessions(activeSessions ?? []);
-    setAdminRecentSessions(recentSessions ?? []);
-    setAdminActivityLogs(activityLogs ?? []);
-  }, []);
+    setAdminActiveSessions(activeSessionsRes.data ?? []);
+    setAdminRecentSessions(recentSessionsRes.data ?? []);
+    setAdminRecentSessionsTotal(recentSessionsRes.count ?? 0);
+    setAdminActivityLogs(activityLogsRes.data ?? []);
+    setAdminActivityLogsTotal(activityLogsRes.count ?? 0);
+  }, [adminRecentSessionsPage, adminActivityLogsPage]);
+
+  useEffect(() => {
+    if (isAdmin) {
+      fetchAdminData();
+    }
+  }, [isAdmin, fetchAdminData]);
 
   const refreshData = useCallback(async () => {
     if (!user?.id) return;
@@ -838,6 +858,39 @@ const TimeTracking = () => {
                   </Table>
                 )}
               </CardContent>
+              {adminRecentSessionsTotal > ADMIN_PAGE_SIZE && (
+                <CardFooter className="flex items-center justify-between border-t border-slate-100 px-6 py-3 text-xs text-slate-500">
+                  <button
+                    type="button"
+                    className="rounded-md border border-slate-200 px-3 py-1 hover:bg-slate-50 disabled:opacity-50"
+                    onClick={() => setAdminRecentSessionsPage((page) => Math.max(0, page - 1))}
+                    disabled={adminRecentSessionsPage === 0}
+                  >
+                    Previous
+                  </button>
+                  <span>
+                    Page {adminRecentSessionsPage + 1} of{' '}
+                    {Math.max(1, Math.ceil(adminRecentSessionsTotal / ADMIN_PAGE_SIZE))}
+                  </span>
+                  <button
+                    type="button"
+                    className="rounded-md border border-slate-200 px-3 py-1 hover:bg-slate-50 disabled:opacity-50"
+                    onClick={() =>
+                      setAdminRecentSessionsPage((page) =>
+                        page + 1 >= Math.ceil(adminRecentSessionsTotal / ADMIN_PAGE_SIZE)
+                          ? page
+                          : page + 1
+                      )
+                    }
+                    disabled={
+                      adminRecentSessionsPage + 1 >=
+                      Math.ceil(adminRecentSessionsTotal / ADMIN_PAGE_SIZE)
+                    }
+                  >
+                    Next
+                  </button>
+                </CardFooter>
+              )}
             </Card>
 
             <Card className="border-none shadow-lg">
@@ -881,6 +934,39 @@ const TimeTracking = () => {
                   </Table>
                 )}
               </CardContent>
+              {adminActivityLogsTotal > ADMIN_PAGE_SIZE && (
+                <CardFooter className="flex items-center justify-between border-t border-slate-100 px-6 py-3 text-xs text-slate-500">
+                  <button
+                    type="button"
+                    className="rounded-md border border-slate-200 px-3 py-1 hover:bg-slate-50 disabled:opacity-50"
+                    onClick={() => setAdminActivityLogsPage((page) => Math.max(0, page - 1))}
+                    disabled={adminActivityLogsPage === 0}
+                  >
+                    Previous
+                  </button>
+                  <span>
+                    Page {adminActivityLogsPage + 1} of{' '}
+                    {Math.max(1, Math.ceil(adminActivityLogsTotal / ADMIN_PAGE_SIZE))}
+                  </span>
+                  <button
+                    type="button"
+                    className="rounded-md border border-slate-200 px-3 py-1 hover:bg-slate-50 disabled:opacity-50"
+                    onClick={() =>
+                      setAdminActivityLogsPage((page) =>
+                        page + 1 >= Math.ceil(adminActivityLogsTotal / ADMIN_PAGE_SIZE)
+                          ? page
+                          : page + 1
+                      )
+                    }
+                    disabled={
+                      adminActivityLogsPage + 1 >=
+                      Math.ceil(adminActivityLogsTotal / ADMIN_PAGE_SIZE)
+                    }
+                  >
+                    Next
+                  </button>
+                </CardFooter>
+              )}
             </Card>
           </section>
         )}
