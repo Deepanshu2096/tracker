@@ -55,7 +55,8 @@ type WorkSessionRecord = {
 
 type BreakRecord = {
   id: string;
-  session_id: string;
+  session_id: string | null;
+  user_id: string;
   type: 'lunch' | 'tea' | 'bio' | 'other';
   started_at: string;
   ended_at: string | null;
@@ -179,7 +180,8 @@ const TimeTracking = () => {
   const sessionDurationLabel = sessionIsActive
     ? formatDuration(liveDurationSeconds)
     : formatDuration(currentSession?.duration_seconds);
-  const canStartBreak = Boolean(currentSession && !activeBreak);
+  // Breaks are now independent - can start without a session
+  const canStartBreak = Boolean(!activeBreak);
   const canEndBreak = Boolean(activeBreak);
 
   const renderBreakIcon = (type: BreakRecord['type']) => {
@@ -254,32 +256,35 @@ const TimeTracking = () => {
       setEmployeeSessions(sessions ?? []);
       setCurrentSession(current);
 
-      if (current) {
-        const { data: activeBreakData } = await supabase
-          .from('breaks')
-          .select('id, session_id, type, started_at, ended_at, duration_seconds')
-          .eq('session_id', current.id)
-          .is('ended_at', null)
-          .maybeSingle<BreakRecord>();
+      // Fetch active break by user_id (breaks are now independent of sessions)
+      const { data: activeBreakData, error: activeBreakError } = await supabase
+        .from('breaks')
+        .select('id, session_id, type, started_at, ended_at, duration_seconds, user_id')
+        .eq('user_id', profileId)
+        .is('ended_at', null)
+        .order('started_at', { ascending: false })
+        .limit(1)
+        .maybeSingle<BreakRecord>();
 
-        setActiveBreak(activeBreakData ?? null);
-
-        const { data: breakHistoryData, error: breakHistoryError } = await supabase
-          .from('breaks')
-          .select('id, session_id, type, started_at, ended_at, duration_seconds')
-          .eq('session_id', current.id)
-          .order('started_at', { ascending: false })
-          .limit(25);
-
-        if (breakHistoryError) {
-          throw breakHistoryError;
-        }
-
-        setBreakHistory(breakHistoryData ?? []);
-      } else {
-        setActiveBreak(null);
-        setBreakHistory([]);
+      if (activeBreakError) {
+        throw activeBreakError;
       }
+
+      setActiveBreak(activeBreakData ?? null);
+
+      // Fetch break history by user_id
+      const { data: breakHistoryData, error: breakHistoryError } = await supabase
+        .from('breaks')
+        .select('id, session_id, type, started_at, ended_at, duration_seconds, user_id')
+        .eq('user_id', profileId)
+        .order('started_at', { ascending: false })
+        .limit(25);
+
+      if (breakHistoryError) {
+        throw breakHistoryError;
+      }
+
+      setBreakHistory(breakHistoryData ?? []);
     },
     []
   );
@@ -380,6 +385,16 @@ const TimeTracking = () => {
   }, [currentSession]);
 
   const handleStartSession = async () => {
+    // Prevent check-in if there's an active break
+    if (activeBreak) {
+      toast({
+        title: 'Cannot check in',
+        description: 'Please end your break before checking in.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     try {
       const { data, error: rpcError } = await supabase.rpc('start_session', {
         notes: sessionNotes || null,
@@ -403,6 +418,15 @@ const TimeTracking = () => {
         toast({
           title: 'Session already active',
           description: 'You already have an open session. Please check out before starting another.',
+        });
+        return;
+      }
+
+      if (errorMessage.includes('break is active') || errorMessage.includes('end your break')) {
+        toast({
+          title: 'Cannot check in',
+          description: 'Please end your break before checking in.',
+          variant: 'destructive',
         });
         return;
       }
@@ -456,12 +480,24 @@ const TimeTracking = () => {
   };
 
   const handleStartBreak = async (breakType: BreakRecord['type']) => {
-    if (!currentSession) return;
+    if (activeBreak) {
+      toast({
+        title: 'Break already in progress',
+        description: 'Please end the current break before starting a new one.',
+        variant: 'destructive',
+      });
+      return;
+    }
 
     try {
+      // Breaks are now independent - can start without a session
+      // If checked in, optionally link to current session, otherwise break is standalone
+      const sessionId = (sessionIsActive && currentSession) ? currentSession.id : null;
+
+      // Start the break (session_id is optional now)
       const { error: rpcError } = await supabase.rpc('start_break', {
-        session_id: currentSession.id,
         break_type: breakType,
+        session_id: sessionId,
       });
 
       if (rpcError) throw rpcError;
@@ -473,9 +509,10 @@ const TimeTracking = () => {
 
       await refreshData();
     } catch (breakError: unknown) {
+      const errorMessage = getErrorMessage(breakError);
       toast({
         title: 'Unable to start break',
-        description: getErrorMessage(breakError),
+        description: errorMessage,
         variant: 'destructive',
       });
     }
@@ -484,20 +521,32 @@ const TimeTracking = () => {
   const handleEndBreak = async () => {
     if (!activeBreak) return;
 
+    // Save break type and break object before clearing state
+    const breakType = activeBreak.type;
+    const breakToEnd = activeBreak;
+
     try {
       const { error: rpcError } = await supabase.rpc('end_break', {
-        break_id: activeBreak.id,
+        break_id: breakToEnd.id,
       });
 
       if (rpcError) throw rpcError;
 
+      // Immediately clear activeBreak state to update UI
+      setActiveBreak(null);
+
       toast({
-        title: `${getBreakLabel(activeBreak.type)} break ended`,
+        title: `${getBreakLabel(breakType)} break ended`,
         description: 'Welcome back!',
       });
 
+      // Refresh data in background to sync with server
       await refreshData();
     } catch (breakError: unknown) {
+      // On error, refresh data to restore correct state from server
+      // This ensures UI matches database state
+      await refreshData();
+      
       toast({
         title: 'Unable to end break',
         description: getErrorMessage(breakError),
@@ -613,6 +662,7 @@ const TimeTracking = () => {
                     : 'bg-sky-500 hover:bg-sky-500/90 text-white'
                 }`}
                 onClick={sessionIsActive ? handleEndSession : handleStartSession}
+                disabled={!sessionIsActive && activeBreak !== null}
               >
                 {sessionIsActive ? (
                   <>
@@ -626,39 +676,24 @@ const TimeTracking = () => {
                   </>
                 )}
               </Button>
+              {!sessionIsActive && activeBreak !== null && (
+                <p className="text-xs text-rose-600 text-center">
+                  End your break to check in
+                </p>
+              )}
             </CardContent>
           </Card>
 
-          <Card className="border-none shadow-lg">
-            <CardHeader className="pb-4">
-              <CardTitle className="text-lg font-semibold text-slate-800">Break Tracking</CardTitle>
-              <CardDescription>Take a break when needed</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-5">
-              {!currentSession && (
-                <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
-                  Start a work session to enable break tracking.
-                </p>
-              )}
-
-              {currentSession && (
-                <>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    {BREAK_OPTIONS.map((option) => (
-                      <Button
-                        key={option.value}
-                        variant="outline"
-                        className="flex h-12 w-full items-center justify-center gap-2 rounded-xl border-slate-200 text-slate-700 shadow-sm transition hover:border-sky-200 hover:bg-sky-50"
-                        disabled={!canStartBreak}
-                        onClick={() => handleStartBreak(option.value)}
-                      >
-                        {renderBreakIcon(option.value)}
-                        {option.label}
-                      </Button>
-                    ))}
-                  </div>
-
-                  {activeBreak ? (
+          {/* Show break tracker when checked out OR when there's an active break */}
+          {(!sessionIsActive || activeBreak) && (
+            <Card className="border-none shadow-lg">
+              <CardHeader className="pb-4">
+                <CardTitle className="text-lg font-semibold text-slate-800">Break Tracking</CardTitle>
+                <CardDescription>Take a break when needed</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                {activeBreak ? (
+                  <>
                     <div className="rounded-2xl border border-slate-200 bg-sky-50 p-4 text-sm text-slate-700">
                       <p className="font-medium">
                         {getBreakLabel(activeBreak.type)} break in progress
@@ -667,23 +702,41 @@ const TimeTracking = () => {
                         Started at {formatDateTime(activeBreak.started_at)}
                       </p>
                     </div>
-                  ) : (
-                    <p className="text-sm text-slate-500">Select a break type to log it.</p>
-                  )}
 
-                  <Button
-                    variant="secondary"
-                    className="w-full gap-2"
-                    disabled={!canEndBreak}
-                    onClick={handleEndBreak}
-                  >
-                    <PauseCircle className="h-4 w-4" />
-                    End Break
-                  </Button>
-                </>
-              )}
-            </CardContent>
-          </Card>
+                    <Button
+                      variant="secondary"
+                      className="w-full gap-2"
+                      disabled={!canEndBreak}
+                      onClick={handleEndBreak}
+                    >
+                      <PauseCircle className="h-4 w-4" />
+                      End Break
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {BREAK_OPTIONS.map((option) => (
+                        <Button
+                          key={option.value}
+                          variant="outline"
+                          className="flex h-12 w-full items-center justify-center gap-2 rounded-xl border-slate-200 text-slate-700 shadow-sm transition hover:border-sky-200 hover:bg-sky-50"
+                          disabled={!canStartBreak}
+                          onClick={() => handleStartBreak(option.value)}
+                        >
+                          {renderBreakIcon(option.value)}
+                          {option.label}
+                        </Button>
+                      ))}
+                    </div>
+                    <p className="text-sm text-slate-500">
+                      Select a break type to start tracking your break.
+                    </p>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          )}
         </section>
 
         {employeeSessions.length > 0 && (
