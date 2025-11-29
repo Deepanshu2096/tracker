@@ -1,0 +1,1839 @@
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  Calendar,
+  Coffee,
+  Droplet,
+  Loader2,
+  LogOut,
+  MoreHorizontal,
+  PauseCircle,
+  PlayCircle,
+  RefreshCcw,
+  UtensilsCrossed,
+  Clock,
+  Activity,
+  Zap,
+  Moon,
+} from 'lucide-react';
+import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/hooks/useAuth';
+import { useToast } from '@/hooks/use-toast';
+import { useSessionStore } from '@/store/sessionStore';
+import { useBreakStore } from '@/store/breakStore';
+import { useActivityTracker } from '@/hooks/useActivityTracker';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { Textarea } from '@/components/ui/textarea';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog';
+
+type UserRole = 'admin' | 'manager' | 'annotator' | 'reviewer';
+
+type ProfileRecord = {
+  id: string;
+  email: string | null;
+  role: UserRole | null;
+};
+
+type BreakRecord = {
+  id: string;
+  session_id: string | null;
+  user_id: string;
+  type: 'lunch' | 'tea' | 'bio' | 'other';
+  started_at: string;
+  ended_at: string | null;
+  duration_seconds: number | null;
+};
+
+type ActivityLogRecord = {
+  id: string;
+  actor_id: string | null;
+  target_user_id: string | null;
+  action: string;
+  metadata: Record<string, unknown> | null;
+  created_at: string;
+};
+
+const BREAK_OPTIONS: Array<{ value: BreakRecord['type']; label: string }> = [
+  { value: 'lunch', label: 'Lunch' },
+  { value: 'tea', label: 'Tea' },
+  { value: 'bio', label: 'Bio' },
+  { value: 'other', label: 'Other' },
+];
+
+const OTHER_BREAK_OPTIONS = [
+  { value: 'break1', label: 'Break 1' },
+  { value: 'break2', label: 'Break 2' },
+  { value: 'break3', label: 'Break 3' },
+];
+
+const formatDateTime = (value: string | null) => {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
+};
+
+const formatDuration = (seconds: number | null | undefined) => {
+  if (seconds == null || Number.isNaN(seconds)) return '—';
+
+  const absolute = Math.max(0, seconds);
+  const hours = Math.floor(absolute / 3600);
+  const minutes = Math.floor((absolute % 3600) / 60);
+  const remainingSeconds = absolute % 60;
+
+  const parts = [];
+  if (hours) parts.push(`${hours}h`);
+  if (minutes) parts.push(`${minutes}m`);
+  if (!hours && !minutes) parts.push(`${remainingSeconds}s`);
+  return parts.join(' ');
+};
+
+const formatTimer = (seconds: number | null | undefined) => {
+  if (seconds == null || Number.isNaN(seconds)) return '00:00:00';
+
+  const absolute = Math.max(0, seconds);
+  const hours = Math.floor(absolute / 3600);
+  const minutes = Math.floor((absolute % 3600) / 60);
+  const remainingSeconds = absolute % 60;
+
+  return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
+};
+
+const getLiveDurationSeconds = (startedAt: string) => {
+  const start = new Date(startedAt).getTime();
+  const now = Date.now();
+  if (Number.isNaN(start)) return 0;
+  return Math.max(0, Math.floor((now - start) / 1000));
+};
+
+const metadataPreview = (metadata: Record<string, unknown> | null) => {
+  if (!metadata || Object.keys(metadata).length === 0) return '—';
+  try {
+    return JSON.stringify(metadata);
+  } catch {
+    return '—';
+  }
+};
+
+const getBreakLabel = (type: BreakRecord['type']) =>
+  BREAK_OPTIONS.find((option) => option.value === type)?.label ?? type;
+
+const getErrorMessage = (error: unknown) => {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  return 'An unexpected error occurred.';
+};
+
+const TimeTracking = () => {
+  const { user, signOut } = useAuth();
+  const { toast } = useToast();
+
+  // Session store
+  const {
+    sessions: employeeSessions,
+    currentSession,
+    loading: sessionLoading,
+    error: sessionError,
+    adminActiveSessions,
+    adminRecentSessions,
+    adminRecentSessionsPage,
+    adminRecentSessionsTotal,
+    employeeSessionsPage,
+    employeeSessionsTotal,
+    getEmployeeSessions,
+    getCurrentSession,
+    startSession,
+    endSession,
+    getAdminActiveSessions,
+    getAdminRecentSessions,
+    setAdminRecentSessionsPage,
+    setEmployeeSessionsPage,
+    clearError: clearSessionError,
+  } = useSessionStore();
+
+  // Break store
+  const {
+    activeBreak,
+    breakHistory,
+    loading: breakLoading,
+    error: breakError,
+    breakHistoryPage,
+    breakHistoryTotal,
+    startBreak,
+    endBreak,
+    getActiveBreak,
+    getBreakHistory,
+    setBreakHistoryPage,
+    clearError: clearBreakError,
+  } = useBreakStore();
+
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const [profile, setProfile] = useState<ProfileRecord | null>(null);
+  const [adminActivityLogs, setAdminActivityLogs] = useState<ActivityLogRecord[]>([]);
+  const [profilesDirectory, setProfilesDirectory] = useState<Record<string, ProfileRecord>>({});
+  const [adminActivityLogsPage, setAdminActivityLogsPage] = useState(0);
+  const [adminActivityLogsTotal, setAdminActivityLogsTotal] = useState(0);
+
+  const [sessionNotes, setSessionNotes] = useState('');
+
+  const [liveDurationSeconds, setLiveDurationSeconds] = useState<number | null>(null);
+  const [showAdminPanel, setShowAdminPanel] = useState(false);
+
+  // Local filter states
+  const [sessionStatusFilter, setSessionStatusFilter] = useState<string>('all');
+  const [sessionDateFrom, setSessionDateFrom] = useState<string>('');
+  const [sessionDateTo, setSessionDateTo] = useState<string>('');
+  const [breakTypeFilter, setBreakTypeFilter] = useState<string>('all');
+  const [breakDateFrom, setBreakDateFrom] = useState<string>('');
+  const [breakDateTo, setBreakDateTo] = useState<string>('');
+  const [showIdleWarning, setShowIdleWarning] = useState<boolean>(false);
+  const [showOtherBreakDropdown, setShowOtherBreakDropdown] = useState<boolean>(false);
+
+  const PAGE_SIZE = 10;
+
+  const error = sessionError || breakError;
+
+  const isAdmin = useMemo(() => profile?.role === 'admin' || profile?.role === 'manager', [profile]);
+
+  // Auto-show admin panel for admin users
+  useEffect(() => {
+    if (isAdmin && profile) {
+      setShowAdminPanel(true);
+    } else if (!isAdmin) {
+      setShowAdminPanel(false);
+    }
+  }, [isAdmin, profile]);
+
+  const metadataFullName =
+    typeof user?.user_metadata?.full_name === 'string'
+      ? (user.user_metadata.full_name as string)
+      : undefined;
+
+  const displayName =
+    profile?.email ||
+    metadataFullName ||
+    user?.email ||
+    'there';
+  const firstName = displayName.split(' ')[0] || displayName;
+
+  const sessionIsActive = currentSession?.status === 'open';
+  const sessionStartTime = currentSession ? formatDateTime(currentSession.started_at) : null;
+  const sessionDurationLabel = sessionIsActive
+    ? formatTimer(liveDurationSeconds)
+    : formatDuration(currentSession?.duration_seconds);
+  // Breaks are now independent - can start without a session
+  const canStartBreak = Boolean(!activeBreak);
+  const canEndBreak = Boolean(activeBreak);
+
+  // Activity tracking for idle time detection
+  const activityTracker = useActivityTracker({
+    idleThresholdMs: 1 * 60 * 1000, // 1 minute to mark as idle
+    idleWarningThresholdMs: 5 * 60 * 1000, // 5 minutes to show warning popup
+    enabled: sessionIsActive && !activeBreak, // Only track when session is active and no break
+    onIdleChange: (isIdle) => {
+      if (!isIdle) {
+        // Reset warning dialog when user becomes active again
+        setShowIdleWarning(false);
+      }
+    },
+    onIdleWarning: () => {
+      // Show popup when idle for 5 minutes
+      setShowIdleWarning(true);
+    },
+  });
+
+  // Start/stop activity tracking based on session state
+  useEffect(() => {
+    if (sessionIsActive && !activeBreak) {
+      activityTracker.startTracking();
+    } else {
+      activityTracker.stopTracking();
+    }
+
+    return () => {
+      activityTracker.stopTracking();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionIsActive, activeBreak]);
+
+  // Reset tracking when starting a new session
+  useEffect(() => {
+    if (sessionIsActive && currentSession) {
+      activityTracker.resetTracking();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentSession?.id]); // Only reset when session ID changes
+
+  // Calculate today's productive time (since midnight)
+  const todayProductiveTime = useMemo(() => {
+    const now = new Date();
+    const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+    // Get all sessions that started today
+    const todaySessions = employeeSessions.filter((session) => {
+      const sessionDate = new Date(session.started_at);
+      return sessionDate >= midnight;
+    });
+
+    // Sum up duration_seconds from completed sessions
+    let totalSeconds = 0;
+    todaySessions.forEach((session) => {
+      if (session.status === 'closed' && session.duration_seconds) {
+        totalSeconds += session.duration_seconds;
+      } else if (session.status === 'open' && session.started_at) {
+        // For active session, use live duration
+        const sessionStart = new Date(session.started_at);
+        if (sessionStart >= midnight) {
+          // Only count if session started today
+          if (liveDurationSeconds !== null) {
+            totalSeconds += liveDurationSeconds;
+          } else {
+            // Fallback to calculated duration
+            totalSeconds += getLiveDurationSeconds(session.started_at);
+          }
+        }
+      }
+    });
+
+    return totalSeconds;
+  }, [employeeSessions, liveDurationSeconds, currentSession]);
+
+  const renderBreakIcon = (type: BreakRecord['type']) => {
+    const className = 'h-4 w-4';
+    switch (type) {
+      case 'lunch':
+        return <UtensilsCrossed className={className} />;
+      case 'tea':
+        return <Coffee className={className} />;
+      case 'bio':
+        return <Droplet className={className} />;
+      default:
+        return <MoreHorizontal className={className} />;
+    }
+  };
+
+  const ADMIN_PAGE_SIZE = 8;
+
+  const fetchProfile = useCallback(async () => {
+    if (!user?.id) return null;
+
+    const { data, error: profileError } = await supabase
+      .from('profiles')
+      .select('id, email, role')
+      .eq('id', user.id)
+      .maybeSingle<ProfileRecord>();
+
+    if (profileError) {
+      throw profileError;
+    }
+
+    if (!data) {
+      const { data: createdProfile, error: insertError } = await supabase
+        .from('profiles')
+        .insert({
+          id: user.id,
+          email: user.email,
+          role: 'annotator' as UserRole,
+          user_id: user.id,
+        })
+        .select('id, email, role')
+        .single<ProfileRecord>();
+
+      if (insertError) {
+        throw insertError;
+      }
+
+      setProfile(createdProfile);
+      return createdProfile;
+    }
+
+    setProfile(data);
+    return data;
+  }, [user?.id, metadataFullName, user?.email]);
+
+  const fetchEmployeeData = useCallback(
+    async (profileId: string) => {
+      // Build session filters
+      const sessionFilters = {
+        status: sessionStatusFilter === 'all' ? null : (sessionStatusFilter as 'open' | 'closed'),
+        dateFrom: sessionDateFrom || null,
+        dateTo: sessionDateTo || null,
+      };
+
+      // Build break filters
+      const breakFilters = {
+        type: breakTypeFilter === 'all' ? null : (breakTypeFilter as 'lunch' | 'tea' | 'bio' | 'other'),
+        dateFrom: breakDateFrom || null,
+        dateTo: breakDateTo || null,
+      };
+
+      await getEmployeeSessions(profileId, { page: employeeSessionsPage, pageSize: PAGE_SIZE }, sessionFilters);
+      await getCurrentSession(profileId);
+      // Fetch active break and break history
+      await getActiveBreak(profileId);
+      await getBreakHistory(profileId, { page: breakHistoryPage, pageSize: PAGE_SIZE }, breakFilters);
+    },
+    [getEmployeeSessions, getCurrentSession, getActiveBreak, getBreakHistory, employeeSessionsPage, breakHistoryPage, sessionStatusFilter, sessionDateFrom, sessionDateTo, breakTypeFilter, breakDateFrom, breakDateTo]
+  );
+
+  const fetchAdminData = useCallback(async () => {
+    try {
+      const profilesRes = await supabase
+        .from('profiles')
+        .select('id, email, role')
+        .order('email', { ascending: true });
+
+    if (profilesRes.error) throw profilesRes.error;
+
+    const directory = Object.fromEntries((profilesRes.data ?? []).map((item) => [item.id, item]));
+
+    setProfilesDirectory(directory);
+      
+      // Note: activity_logs table may not exist in the schema, so we'll skip it for now
+      // or handle it separately if needed
+      setAdminActivityLogs([]);
+      setAdminActivityLogsTotal(0);
+
+      // Fetch sessions using store
+      await getAdminActiveSessions();
+      await getAdminRecentSessions({ page: adminRecentSessionsPage, pageSize: ADMIN_PAGE_SIZE });
+    } catch (error: any) {
+      throw error;
+    }
+  }, [adminRecentSessionsPage, adminActivityLogsPage, getAdminActiveSessions, getAdminRecentSessions]);
+
+  // Load admin data when isAdmin and profile are available
+  useEffect(() => {
+    if (isAdmin && profile) {
+      fetchAdminData();
+    }
+  }, [isAdmin, profile, fetchAdminData]);
+
+  const refreshData = useCallback(async () => {
+    if (!user?.id) return;
+
+    setRefreshing(true);
+    clearSessionError();
+    clearBreakError();
+
+    try {
+      const loadedProfile = await fetchProfile();
+
+      if (loadedProfile) {
+        await fetchEmployeeData(loadedProfile.id);
+
+        if (loadedProfile.role === 'admin' || loadedProfile.role === 'manager') {
+          await fetchAdminData();
+        }
+      }
+    } catch (refreshError: unknown) {
+      console.error(refreshError);
+      const errorMsg = getErrorMessage(refreshError);
+      toast({
+        title: 'Error',
+        description: errorMsg,
+        variant: 'destructive',
+      });
+    } finally {
+      setRefreshing(false);
+      setLoading(false);
+    }
+  }, [user?.id, fetchProfile, fetchEmployeeData, fetchAdminData, clearSessionError, clearBreakError, toast]);
+
+  useEffect(() => {
+    refreshData();
+  }, [refreshData]);
+
+  // Fetch data when filters or pagination change
+  useEffect(() => {
+    if (user?.id && profile?.id) {
+      const loadData = async () => {
+        const sessionFilters = {
+          status: sessionStatusFilter === 'all' ? null : (sessionStatusFilter as 'open' | 'closed'),
+          dateFrom: sessionDateFrom || null,
+          dateTo: sessionDateTo || null,
+        };
+
+        const breakFilters = {
+          type: breakTypeFilter === 'all' ? null : (breakTypeFilter as 'lunch' | 'tea' | 'bio' | 'other'),
+          dateFrom: breakDateFrom || null,
+          dateTo: breakDateTo || null,
+        };
+
+        await getEmployeeSessions(profile.id, { page: employeeSessionsPage, pageSize: PAGE_SIZE }, sessionFilters);
+        await getCurrentSession(profile.id);
+        // Always fetch active break regardless of filters
+        await getActiveBreak(profile.id);
+        await getBreakHistory(profile.id, { page: breakHistoryPage, pageSize: PAGE_SIZE }, breakFilters);
+      };
+      loadData();
+    }
+  }, [user?.id, profile?.id, employeeSessionsPage, breakHistoryPage, sessionStatusFilter, sessionDateFrom, sessionDateTo, breakTypeFilter, breakDateFrom, breakDateTo, getEmployeeSessions, getCurrentSession, getActiveBreak, getBreakHistory]);
+
+  useEffect(() => {
+    let interval: ReturnType<typeof setInterval> | undefined;
+    if (currentSession && currentSession.status === 'open') {
+      setLiveDurationSeconds(getLiveDurationSeconds(currentSession.started_at));
+      interval = setInterval(() => {
+        setLiveDurationSeconds(getLiveDurationSeconds(currentSession.started_at));
+      }, 1000); // Update every second for live timer
+    } else {
+      setLiveDurationSeconds(null);
+    }
+
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [currentSession]);
+
+  const handleStartSession = async (e?: React.MouseEvent) => {
+    e?.preventDefault();
+    e?.stopPropagation();
+    
+    // Refresh active break before checking to ensure we have the latest state
+    if (user?.id && profile?.id) {
+      await getActiveBreak(profile.id);
+      // Get the updated active break state after fetching (access store directly)
+      const updatedActiveBreak = useBreakStore.getState().activeBreak;
+      if (updatedActiveBreak) {
+        toast({
+          title: 'Cannot check in',
+          description: 'Please end your break before checking in.',
+          variant: 'destructive',
+        });
+        return;
+      }
+    }
+
+    // Also check the current activeBreak state (in case we didn't need to refresh)
+    if (activeBreak) {
+      toast({
+        title: 'Cannot check in',
+        description: 'Please end your break before checking in.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    try {
+      const session = await startSession(sessionNotes || null);
+
+      if (session) {
+      toast({
+        title: 'Session started',
+        description: 'Your work session has started successfully.',
+      });
+
+      setSessionNotes('');
+        if (user?.id && profile?.id) {
+          // Refresh sessions with current filters
+          const sessionFilters = {
+            status: sessionStatusFilter === 'all' ? null : (sessionStatusFilter as 'open' | 'closed'),
+            dateFrom: sessionDateFrom || null,
+            dateTo: sessionDateTo || null,
+          };
+          await getEmployeeSessions(profile.id, { page: employeeSessionsPage, pageSize: PAGE_SIZE }, sessionFilters);
+          await getCurrentSession(profile.id);
+        }
+      }
+    } catch (startError: unknown) {
+      const errorMessage = getErrorMessage(startError);
+      const errorCode = typeof startError === 'object' && startError !== null ? (startError as { code?: string }).code : undefined;
+
+      if (errorCode === '409' || errorMessage.includes('work_sessions_one_open_per_user')) {
+        toast({
+          title: 'Session already active',
+          description: 'You already have an open session. Please check out before starting another.',
+        });
+        return;
+      }
+
+      if (errorMessage.includes('break is active') || errorMessage.includes('end your break') || errorMessage.includes('Please end your break first')) {
+        // Refresh active break to show it in the UI
+        if (user?.id && profile?.id) {
+          await getActiveBreak(profile.id);
+        }
+        toast({
+          title: 'Cannot check in',
+          description: 'Please end your break before checking in.',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      toast({
+        title: 'Unable to start session',
+        description: errorMessage,
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handleEndSession = async (e?: React.MouseEvent) => {
+    e?.preventDefault();
+    e?.stopPropagation();
+    
+    if (!currentSession) return;
+
+    try {
+      await endSession(currentSession.id);
+
+      toast({
+        title: 'Session ended',
+        description: 'Your work session has been closed.',
+      });
+
+      if (user?.id && profile?.id) {
+        // Refresh sessions with current filters
+        const sessionFilters = {
+          status: sessionStatusFilter === 'all' ? null : (sessionStatusFilter as 'open' | 'closed'),
+          dateFrom: sessionDateFrom || null,
+          dateTo: sessionDateTo || null,
+        };
+        await getEmployeeSessions(profile.id, { page: employeeSessionsPage, pageSize: PAGE_SIZE }, sessionFilters);
+        await getCurrentSession(profile.id);
+      }
+    } catch (endError: unknown) {
+      const errorMessage = getErrorMessage(endError);
+      const errorCode =
+        typeof endError === 'object' && endError !== null
+          ? (endError as { code?: string }).code
+          : undefined;
+
+      if (errorCode === 'P0001' || errorMessage.includes('No open session found')) {
+        toast({
+          title: 'No open session',
+          description: 'There is no active session to end.',
+        });
+        if (user?.id && profile?.id) {
+          // Refresh sessions with current filters
+          const sessionFilters = {
+            status: sessionStatusFilter === 'all' ? null : (sessionStatusFilter as 'open' | 'closed'),
+            dateFrom: sessionDateFrom || null,
+            dateTo: sessionDateTo || null,
+          };
+          await getEmployeeSessions(profile.id, { page: employeeSessionsPage, pageSize: PAGE_SIZE }, sessionFilters);
+          await getCurrentSession(profile.id);
+        }
+        return;
+      }
+
+      toast({
+        title: 'Unable to end session',
+        description: errorMessage,
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handleStartBreak = async (breakType: BreakRecord['type'], otherBreakLabel?: string, e?: React.MouseEvent) => {
+    e?.preventDefault();
+    e?.stopPropagation();
+    
+    if (activeBreak) {
+      toast({
+        title: 'Break already in progress',
+        description: 'Please end the current break before starting a new one.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    try {
+      // Breaks are now independent - can start without a session
+      // If checked in, optionally link to current session, otherwise break is standalone
+      const sessionId = (sessionIsActive && currentSession) ? currentSession.id : null;
+
+      const newBreak = await startBreak(breakType, sessionId);
+
+      if (newBreak) {
+      const breakLabel = otherBreakLabel || getBreakLabel(breakType);
+      toast({
+        title: `${breakLabel} break started`,
+        description: 'Enjoy your break!',
+      });
+
+        if (user?.id && profile?.id) {
+          // Refresh breaks with current filters
+          const breakFilters = {
+            type: breakTypeFilter === 'all' ? null : (breakTypeFilter as 'lunch' | 'tea' | 'bio' | 'other'),
+            dateFrom: breakDateFrom || null,
+            dateTo: breakDateTo || null,
+          };
+          await getActiveBreak(profile.id);
+          await getBreakHistory(profile.id, { page: breakHistoryPage, pageSize: PAGE_SIZE }, breakFilters);
+        }
+      }
+    } catch (breakError: unknown) {
+      const errorMessage = getErrorMessage(breakError);
+      toast({
+        title: 'Unable to start break',
+        description: errorMessage,
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handleEndBreak = async (e?: React.MouseEvent) => {
+    e?.preventDefault();
+    e?.stopPropagation();
+    
+    if (!activeBreak) return;
+
+    // Save break type before clearing state
+    const breakType = activeBreak.type;
+    const breakToEnd = activeBreak;
+
+    try {
+      await endBreak(breakToEnd.id);
+
+      toast({
+        title: `${getBreakLabel(breakType)} break ended`,
+        description: 'Welcome back!',
+      });
+
+      // Refresh break data in background to sync with server
+      if (user?.id && profile?.id) {
+        // Refresh breaks with current filters
+        const breakFilters = {
+          type: breakTypeFilter === 'all' ? null : (breakTypeFilter as 'lunch' | 'tea' | 'bio' | 'other'),
+          dateFrom: breakDateFrom || null,
+          dateTo: breakDateTo || null,
+        };
+        await getActiveBreak(profile.id);
+        await getBreakHistory(profile.id, { page: breakHistoryPage, pageSize: PAGE_SIZE }, breakFilters);
+      }
+    } catch (breakError: unknown) {
+      // On error, refresh data to restore correct state from server
+      // This ensures UI matches database state
+      if (user?.id && profile?.id) {
+        // Refresh breaks with current filters
+        const breakFilters = {
+          type: breakTypeFilter === 'all' ? null : (breakTypeFilter as 'lunch' | 'tea' | 'bio' | 'other'),
+          dateFrom: breakDateFrom || null,
+          dateTo: breakDateTo || null,
+        };
+        await getActiveBreak(profile.id);
+        await getBreakHistory(profile.id, { page: breakHistoryPage, pageSize: PAGE_SIZE }, breakFilters);
+      }
+      
+      toast({
+        title: 'Unable to end break',
+        description: getErrorMessage(breakError),
+        variant: 'destructive',
+      });
+    }
+  };
+
+  if (!user) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50">
+        <p className="text-muted-foreground">Please sign in to manage time tracking.</p>
+      </div>
+    );
+  }
+
+  if (loading || sessionLoading || breakLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50">
+        <Loader2 className="h-8 w-8 animate-spin text-sky-500" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-50">
+      <div className="mx-auto flex max-w-5xl flex-col gap-8 px-6 py-10">
+        <header className="flex flex-col gap-6 rounded-3xl bg-white p-6 shadow-sm md:flex-row md:items-center md:justify-between">
+          <div>
+            <p className="text-2xl font-semibold text-sky-600">Anvesana</p>
+            <p className="text-sm text-muted-foreground">Welcome, {firstName}.</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="gap-2"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                refreshData();
+              }}
+              disabled={refreshing}
+            >
+              {refreshing ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Refreshing
+                </>
+              ) : (
+                <>
+                  <RefreshCcw className="h-4 w-4" />
+                  Refresh
+                </>
+              )}
+            </Button>
+            {isAdmin && (
+              <Button
+                type="button"
+                variant={showAdminPanel ? 'default' : 'outline'}
+                size="sm"
+                className="gap-2"
+                onClick={async (e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const newValue = !showAdminPanel;
+                  setShowAdminPanel(newValue);
+                  // Reload admin data when opening the panel
+                  if (newValue && isAdmin && profile) {
+                    await fetchAdminData();
+                  }
+                }}
+              >
+                {showAdminPanel ? 'Hide Admin Panel' : 'Admin Panel'}
+              </Button>
+            )}
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="gap-2"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                signOut();
+              }}
+            >
+              <LogOut className="h-4 w-4" />
+              Sign Out
+            </Button>
+          </div>
+        </header>
+
+        {error && (
+          <Alert variant="destructive">
+            <AlertTitle>Something went wrong</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+
+        {/* Today's Productive Time Card */}
+        <Card className="border border-emerald-100 bg-gradient-to-br from-emerald-50 to-sky-50 shadow-lg">
+          <CardContent className="pt-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-slate-600">Today's Productive Time</p>
+                <p className="text-xs text-slate-500 mt-1">Tracked since midnight</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Clock className="h-5 w-5 text-emerald-600" />
+                <span className="text-3xl font-mono font-bold text-emerald-700 tabular-nums">
+                  {formatTimer(todayProductiveTime)}
+                </span>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <section className="grid gap-6 md:grid-cols-2">
+          <Card className="border border-sky-100 bg-white shadow-lg">
+            <CardHeader className="pb-4">
+              <CardTitle className="text-lg font-semibold text-slate-800">Work Session</CardTitle>
+              <CardDescription className="text-slate-500">
+                Start your work day
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              {sessionIsActive ? (
+                <div className="space-y-4">
+                <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sm">
+                  <p className="font-medium text-slate-700">You are currently checked in.</p>
+                    <div className="mt-3 grid gap-2">
+                      {sessionStartTime && <span className="text-slate-500">Started at {sessionStartTime}</span>}
+                      {sessionDurationLabel && (
+                        <div className="flex items-center gap-2">
+                          <Clock className="h-4 w-4 text-sky-600" />
+                          <span className="text-2xl font-mono font-semibold text-sky-700 tabular-nums">
+                            {sessionDurationLabel}
+                          </span>
+                  </div>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {/* Activity Tracking Display */}
+                  {!activeBreak && (
+                    <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm">
+                      <div className="flex items-center justify-between mb-3">
+                        <p className="font-medium text-slate-700">Activity Status</p>
+                        <div className="flex items-center gap-2">
+                          {activityTracker.isIdle ? (
+                            <>
+                              <Moon className="h-4 w-4 text-amber-500" />
+                              <span className="text-xs font-medium text-amber-600">Idle</span>
+                            </>
+                          ) : (
+                            <>
+                              <Zap className="h-4 w-4 text-emerald-500" />
+                              <span className="text-xs font-medium text-emerald-600">Active</span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4 pt-2 border-t border-slate-100">
+                        <div>
+                          <p className="text-xs text-slate-500 mb-1">Active Time</p>
+                          <p className="text-lg font-mono font-semibold text-emerald-700 tabular-nums">
+                            {formatTimer(activityTracker.activeTime)}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-500 mb-1">Idle Time</p>
+                          <p className="text-lg font-mono font-semibold text-amber-700 tabular-nums">
+                            {formatTimer(activityTracker.idleTime)}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600">
+                  <p>You're currently checked out. Add optional notes and tap check in when you're ready.</p>
+                </div>
+              )}
+
+              {!sessionIsActive && (
+                <Textarea
+                  placeholder="Optional notes for this session"
+                  value={sessionNotes}
+                  onChange={(event) => setSessionNotes(event.target.value)}
+                  rows={3}
+                />
+              )}
+
+              <Button
+                type="button"
+                className={`w-full gap-2 text-base font-medium ${
+                  sessionIsActive
+                    ? 'bg-rose-500 hover:bg-rose-500/90 text-white'
+                    : 'bg-sky-500 hover:bg-sky-500/90 text-white'
+                }`}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  if (sessionIsActive) {
+                    handleEndSession(e);
+                  } else {
+                    handleStartSession(e);
+                  }
+                }}
+                disabled={!sessionIsActive && activeBreak !== null}
+              >
+                {sessionIsActive ? (
+                  <>
+                    <PauseCircle className="h-4 w-4" />
+                    Check Out
+                  </>
+                ) : (
+                  <>
+                    <PlayCircle className="h-4 w-4" />
+                    Check In
+                  </>
+                )}
+              </Button>
+              {!sessionIsActive && activeBreak !== null && (
+                <p className="text-xs text-rose-600 text-center">
+                  End your break to check in
+                </p>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Show break tracker when checked out OR when there's an active break */}
+          {(!sessionIsActive || activeBreak) && (
+            <Card className="border-none shadow-lg">
+              <CardHeader className="pb-4">
+                <CardTitle className="text-lg font-semibold text-slate-800">Break Tracking</CardTitle>
+                <CardDescription>Take a break when needed</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                {activeBreak ? (
+                  <>
+                    <div className="rounded-2xl border border-slate-200 bg-sky-50 p-4 text-sm text-slate-700">
+                      <p className="font-medium">
+                        {getBreakLabel(activeBreak.type)} break in progress
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        Started at {formatDateTime(activeBreak.started_at)}
+                      </p>
+                    </div>
+
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="w-full gap-2"
+                      disabled={!canEndBreak}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        handleEndBreak(e);
+                      }}
+                    >
+                      <PauseCircle className="h-4 w-4" />
+                      End Break
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {BREAK_OPTIONS.map((option) => {
+                        if (option.value === 'other') {
+                          return (
+                            <div key={option.value} className="relative">
+                              <Select
+                                disabled={!canStartBreak}
+                                onValueChange={(value) => {
+                                  handleStartBreak('other', value);
+                                }}
+                              >
+                                <SelectTrigger className="flex h-12 w-full items-center justify-center gap-2 rounded-xl border-slate-200 text-slate-700 shadow-sm transition hover:border-sky-200 hover:bg-sky-50">
+                                  <MoreHorizontal className="h-4 w-4" />
+                                  <SelectValue placeholder={option.label} />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {OTHER_BREAK_OPTIONS.map((otherOption) => (
+                                    <SelectItem key={otherOption.value} value={otherOption.label}>
+                                      {otherOption.label}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          );
+                        }
+                        return (
+                        <Button
+                            type="button"
+                          key={option.value}
+                          variant="outline"
+                          className="flex h-12 w-full items-center justify-center gap-2 rounded-xl border-slate-200 text-slate-700 shadow-sm transition hover:border-sky-200 hover:bg-sky-50"
+                          disabled={!canStartBreak}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              handleStartBreak(option.value, undefined, e);
+                            }}
+                        >
+                          {renderBreakIcon(option.value)}
+                          {option.label}
+                        </Button>
+                        );
+                      })}
+                    </div>
+                    <p className="text-sm text-slate-500">
+                      Select a break type to start tracking your break.
+                    </p>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          )}
+        </section>
+      </div>
+
+      {/* Idle Warning Dialog */}
+            {/* Filters */}
+            <div className="grid gap-4 md:grid-cols-4">
+              <div>
+                <label className="text-sm font-medium mb-2 block">Status</label>
+                <Select
+                  value={sessionStatusFilter}
+                  onValueChange={(value: string) => {
+                    setSessionStatusFilter(value);
+                    setEmployeeSessionsPage(1);
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="All statuses" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Statuses</SelectItem>
+                    <SelectItem value="open">Open</SelectItem>
+                    <SelectItem value="closed">Closed</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-2 block">Date From</label>
+                <Input
+                  type="date"
+                  value={sessionDateFrom}
+                  onChange={(e) => {
+                    setSessionDateFrom(e.target.value);
+                    setEmployeeSessionsPage(1);
+                  }}
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-2 block">Date To</label>
+                <Input
+                  type="date"
+                  value={sessionDateTo}
+                  onChange={(e) => {
+                    setSessionDateTo(e.target.value);
+                    setEmployeeSessionsPage(1);
+                  }}
+                />
+              </div>
+              <div className="flex items-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setSessionStatusFilter('all');
+                    setSessionDateFrom('');
+                    setSessionDateTo('');
+                    setEmployeeSessionsPage(1);
+                    if (user?.id) {
+                      fetchEmployeeData(user.id);
+                    }
+                  }}
+                >
+                  Clear Filters
+                </Button>
+              </div>
+            </div>
+
+            {/* Table */}
+            {employeeSessions.length > 0 ? (
+              <>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Started</TableHead>
+                    <TableHead>Ended</TableHead>
+                    <TableHead>Duration</TableHead>
+                    <TableHead>Notes</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {employeeSessions.map((session) => (
+                    <TableRow key={session.id}>
+                      <TableCell>
+                        <Badge variant={session.status === 'open' ? 'default' : 'secondary'}>
+                          {session.status === 'open' ? 'Open' : 'Closed'}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>{formatDateTime(session.started_at)}</TableCell>
+                      <TableCell>{formatDateTime(session.ended_at)}</TableCell>
+                      <TableCell>{formatDuration(session.duration_seconds)}</TableCell>
+                      <TableCell className="max-w-[240px] truncate text-sm text-muted-foreground">
+                        {session.notes ?? '—'}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+                {/* Pagination */}
+                {employeeSessionsTotal > PAGE_SIZE && (
+                  <CardFooter className="flex items-center justify-between border-t border-slate-100 px-0 pt-4 text-xs text-slate-500">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={async (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const newPage = Math.max(1, employeeSessionsPage - 1);
+                        setEmployeeSessionsPage(newPage);
+                        if (user?.id) {
+                          const filters = {
+                            status: sessionStatusFilter === 'all' ? null : (sessionStatusFilter as 'open' | 'closed'),
+                            dateFrom: sessionDateFrom || null,
+                            dateTo: sessionDateTo || null,
+                          };
+                          await getEmployeeSessions(user.id, { page: newPage, pageSize: PAGE_SIZE }, filters);
+                        }
+                      }}
+                      disabled={employeeSessionsPage === 1}
+                    >
+                      Previous
+                    </Button>
+                    <span>
+                      Page {employeeSessionsPage} of {Math.max(1, Math.ceil(employeeSessionsTotal / PAGE_SIZE))} ({employeeSessionsTotal} total)
+                    </span>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={async (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const newPage = employeeSessionsPage + 1;
+                        if (newPage <= Math.ceil(employeeSessionsTotal / PAGE_SIZE)) {
+                          setEmployeeSessionsPage(newPage);
+                          if (user?.id) {
+                            const filters = {
+                              status: sessionStatusFilter === 'all' ? null : (sessionStatusFilter as 'open' | 'closed'),
+                              dateFrom: sessionDateFrom || null,
+                              dateTo: sessionDateTo || null,
+                            };
+                            await getEmployeeSessions(user.id, { page: newPage, pageSize: PAGE_SIZE }, filters);
+                          }
+                        }
+                      }}
+                      disabled={employeeSessionsPage >= Math.ceil(employeeSessionsTotal / PAGE_SIZE)}
+                    >
+                      Next
+                    </Button>
+                  </CardFooter>
+                )}
+              </>
+            ) : (
+              <p className="text-sm text-muted-foreground text-center py-8">No sessions found.</p>
+            )}
+            </CardContent>
+          </Card>
+
+          <Card className="border-none shadow-lg">
+            <CardHeader>
+              <CardTitle>Recent Breaks</CardTitle>
+            <CardDescription>Filter and view your break history</CardDescription>
+            </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Filters */}
+            <div className="grid gap-4 md:grid-cols-4">
+              <div>
+                <label className="text-sm font-medium mb-2 block">Break Type</label>
+                <Select
+                  value={breakTypeFilter}
+                  onValueChange={(value: string) => {
+                    setBreakTypeFilter(value);
+                    setBreakHistoryPage(1);
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="All types" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Types</SelectItem>
+                    <SelectItem value="lunch">Lunch</SelectItem>
+                    <SelectItem value="tea">Tea</SelectItem>
+                    <SelectItem value="bio">Bio</SelectItem>
+                    <SelectItem value="other">Other</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-2 block">Date From</label>
+                <Input
+                  type="date"
+                  value={breakDateFrom}
+                  onChange={(e) => {
+                    setBreakDateFrom(e.target.value);
+                    setBreakHistoryPage(1);
+                  }}
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-2 block">Date To</label>
+                <Input
+                  type="date"
+                  value={breakDateTo}
+                  onChange={(e) => {
+                    setBreakDateTo(e.target.value);
+                    setBreakHistoryPage(1);
+                  }}
+                />
+              </div>
+              <div className="flex items-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setBreakTypeFilter('all');
+                    setBreakDateFrom('');
+                    setBreakDateTo('');
+                    setBreakHistoryPage(1);
+                    if (user?.id) {
+                      fetchEmployeeData(user.id);
+                    }
+                  }}
+                >
+                  Clear Filters
+                </Button>
+              </div>
+            </div>
+
+            {/* Table */}
+            {breakHistory.length > 0 ? (
+              <>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Type</TableHead>
+                    <TableHead>Started</TableHead>
+                    <TableHead>Ended</TableHead>
+                    <TableHead>Duration</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {breakHistory.map((item) => (
+                    <TableRow key={item.id}>
+                      <TableCell>{getBreakLabel(item.type)}</TableCell>
+                      <TableCell>{formatDateTime(item.started_at)}</TableCell>
+                      <TableCell>{formatDateTime(item.ended_at)}</TableCell>
+                      <TableCell>{formatDuration(item.duration_seconds)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+                {/* Pagination */}
+                {breakHistoryTotal > PAGE_SIZE && (
+                  <CardFooter className="flex items-center justify-between border-t border-slate-100 px-0 pt-4 text-xs text-slate-500">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={async (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const newPage = Math.max(1, breakHistoryPage - 1);
+                        setBreakHistoryPage(newPage);
+                        if (user?.id) {
+                          const filters = {
+                            type: breakTypeFilter === 'all' ? null : (breakTypeFilter as 'lunch' | 'tea' | 'bio' | 'other'),
+                            dateFrom: breakDateFrom || null,
+                            dateTo: breakDateTo || null,
+                          };
+                          await getBreakHistory(user.id, { page: newPage, pageSize: PAGE_SIZE }, filters);
+                        }
+                      }}
+                      disabled={breakHistoryPage === 1}
+                    >
+                      Previous
+                    </Button>
+                    <span>
+                      Page {breakHistoryPage} of {Math.max(1, Math.ceil(breakHistoryTotal / PAGE_SIZE))} ({breakHistoryTotal} total)
+                    </span>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={async (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const newPage = breakHistoryPage + 1;
+                        if (newPage <= Math.ceil(breakHistoryTotal / PAGE_SIZE)) {
+                          setBreakHistoryPage(newPage);
+                          if (user?.id) {
+                            const filters = {
+                              type: breakTypeFilter === 'all' ? null : (breakTypeFilter as 'lunch' | 'tea' | 'bio' | 'other'),
+                              dateFrom: breakDateFrom || null,
+                              dateTo: breakDateTo || null,
+                            };
+                            await getBreakHistory(user.id, { page: newPage, pageSize: PAGE_SIZE }, filters);
+                          }
+                        }
+                      }}
+                      disabled={breakHistoryPage >= Math.ceil(breakHistoryTotal / PAGE_SIZE)}
+                    >
+                      Next
+                    </Button>
+                  </CardFooter>
+                )}
+              </>
+            ) : (
+              <p className="text-sm text-muted-foreground text-center py-8">No breaks found.</p>
+            )}
+            </CardContent>
+          </Card>
+
+        {/* Attendance Section */}
+        <Card className="border-none shadow-lg">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Calendar className="h-5 w-5" />
+              Attendance
+            </CardTitle>
+            <CardDescription>Daily attendance records and statistics</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {(() => {
+              // Calculate attendance from sessions
+              const attendanceByDate = new Map<string, {
+                date: string;
+                sessions: typeof employeeSessions;
+                totalHours: number;
+                checkIn: string | null;
+                checkOut: string | null;
+                status: 'present' | 'absent' | 'partial';
+              }>();
+
+              employeeSessions.forEach((session) => {
+                const sessionDate = new Date(session.started_at).toISOString().split('T')[0];
+                
+                if (!attendanceByDate.has(sessionDate)) {
+                  attendanceByDate.set(sessionDate, {
+                    date: sessionDate,
+                    sessions: [],
+                    totalHours: 0,
+                    checkIn: null,
+                    checkOut: null,
+                    status: 'present',
+                  });
+                }
+
+                const dayAttendance = attendanceByDate.get(sessionDate)!;
+                dayAttendance.sessions.push(session);
+                
+                // Calculate total hours for the day
+                if (session.duration_seconds) {
+                  dayAttendance.totalHours += session.duration_seconds / 3600;
+                }
+                
+                // Track earliest check-in and latest check-out
+                if (!dayAttendance.checkIn || session.started_at < dayAttendance.checkIn) {
+                  dayAttendance.checkIn = session.started_at;
+                }
+                if (session.ended_at && (!dayAttendance.checkOut || session.ended_at > dayAttendance.checkOut)) {
+                  dayAttendance.checkOut = session.ended_at;
+                }
+              });
+
+              // Convert to array and sort by date (newest first)
+              const attendanceRecords = Array.from(attendanceByDate.values()).sort((a, b) => 
+                new Date(b.date).getTime() - new Date(a.date).getTime()
+              );
+
+              // Calculate statistics
+              const totalDays = attendanceRecords.length;
+              const totalHours = attendanceRecords.reduce((sum, record) => sum + record.totalHours, 0);
+              const averageHours = totalDays > 0 ? totalHours / totalDays : 0;
+
+              return (
+                <>
+                  {/* Statistics */}
+                  <div className="grid grid-cols-1 gap-4 mb-6 md:grid-cols-3">
+                    <div className="rounded-lg border border-slate-200 bg-white p-4">
+                      <div className="flex items-center gap-2 text-sm text-slate-500 mb-1">
+                        <Calendar className="h-4 w-4" />
+                        Days Present
+                      </div>
+                      <div className="text-2xl font-semibold text-slate-800">{totalDays}</div>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-white p-4">
+                      <div className="flex items-center gap-2 text-sm text-slate-500 mb-1">
+                        <Clock className="h-4 w-4" />
+                        Total Hours
+                      </div>
+                      <div className="text-2xl font-semibold text-slate-800">{totalHours.toFixed(1)}h</div>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-white p-4">
+                      <div className="flex items-center gap-2 text-sm text-slate-500 mb-1">
+                        <Clock className="h-4 w-4" />
+                        Avg Hours/Day
+                      </div>
+                      <div className="text-2xl font-semibold text-slate-800">{averageHours.toFixed(1)}h</div>
+                    </div>
+                  </div>
+
+                  {/* Attendance Table */}
+                  {attendanceRecords.length > 0 ? (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Date</TableHead>
+                          <TableHead>Check In</TableHead>
+                          <TableHead>Check Out</TableHead>
+                          <TableHead>Sessions</TableHead>
+                          <TableHead>Total Hours</TableHead>
+                          <TableHead>Status</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {attendanceRecords.map((record) => (
+                          <TableRow key={record.date}>
+                            <TableCell className="font-medium">
+                              {new Date(record.date).toLocaleDateString('en-US', {
+                                weekday: 'short',
+                                year: 'numeric',
+                                month: 'short',
+                                day: 'numeric',
+                              })}
+                            </TableCell>
+                            <TableCell>
+                              {record.checkIn
+                                ? new Date(record.checkIn).toLocaleTimeString('en-US', {
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                  })
+                                : '—'}
+                            </TableCell>
+                            <TableCell>
+                              {record.checkOut
+                                ? new Date(record.checkOut).toLocaleTimeString('en-US', {
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                  })
+                                : '—'}
+                            </TableCell>
+                            <TableCell>{record.sessions.length}</TableCell>
+                            <TableCell>{record.totalHours.toFixed(1)}h</TableCell>
+                            <TableCell>
+                              <Badge
+                                variant={
+                                  record.totalHours >= 8
+                                    ? 'default'
+                                    : record.totalHours >= 4
+                                    ? 'secondary'
+                                    : 'outline'
+                                }
+                              >
+                                {record.totalHours >= 8
+                                  ? 'Full Day'
+                                  : record.totalHours >= 4
+                                  ? 'Half Day'
+                                  : 'Partial'}
+                              </Badge>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  ) : (
+                    <p className="text-sm text-muted-foreground text-center py-8">
+                      No attendance records found.
+                    </p>
+                  )}
+                </>
+              );
+            })()}
+          </CardContent>
+        </Card>
+
+        {showAdminPanel && isAdmin && (
+          <section className="space-y-6">
+            <h2 className="text-xl font-semibold text-slate-800">Admin Panel</h2>
+
+            <Card className="border-none shadow-lg">
+              <CardHeader>
+                <CardTitle>Active Sessions</CardTitle>
+                <CardDescription>Employees currently clocked in</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {adminActiveSessions.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No active sessions right now.</p>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Employee</TableHead>
+                        <TableHead>Started</TableHead>
+                        <TableHead>Elapsed</TableHead>
+                        <TableHead>Notes</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {adminActiveSessions.map((session) => {
+                        const owner = profilesDirectory[session.user_id];
+                        return (
+                          <TableRow key={session.id}>
+                            <TableCell>
+                              <div className="flex flex-col">
+                                <span className="font-medium">
+                                  {owner?.email ?? 'Unknown user'}
+                                </span>
+                                {owner?.email && (
+                                  <span className="text-xs text-muted-foreground">{owner.email}</span>
+                                )}
+                              </div>
+                            </TableCell>
+                            <TableCell>{formatDateTime(session.started_at)}</TableCell>
+                            <TableCell>
+                              {formatTimer(getLiveDurationSeconds(session.started_at))}
+                            </TableCell>
+                            <TableCell className="max-w-[260px] truncate text-sm text-muted-foreground">
+                              {session.notes ?? '—'}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="border-none shadow-lg">
+              <CardHeader>
+                <CardTitle>Recent Sessions</CardTitle>
+                <CardDescription>Latest shifts across the organization</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {adminRecentSessions.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No sessions recorded yet.</p>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Employee</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Started</TableHead>
+                        <TableHead>Ended</TableHead>
+                        <TableHead>Duration</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {adminRecentSessions.map((session) => {
+                        const owner = profilesDirectory[session.user_id];
+                        return (
+                          <TableRow key={session.id}>
+                            <TableCell>
+                              <div className="flex flex-col">
+                                <span className="font-medium">
+                                  {owner?.email ?? 'Unknown user'}
+                                </span>
+                                {owner?.email && (
+                                  <span className="text-xs text-muted-foreground">{owner.email}</span>
+                                )}
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant={session.status === 'open' ? 'default' : 'secondary'}>
+                                {session.status === 'open' ? 'Open' : 'Closed'}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>{formatDateTime(session.started_at)}</TableCell>
+                            <TableCell>{formatDateTime(session.ended_at)}</TableCell>
+                            <TableCell>{formatDuration(session.duration_seconds)}</TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+              {adminRecentSessionsTotal > ADMIN_PAGE_SIZE && (
+                <CardFooter className="flex items-center justify-between border-t border-slate-100 px-6 py-3 text-xs text-slate-500">
+                  <button
+                    type="button"
+                    className="rounded-md border border-slate-200 px-3 py-1 hover:bg-slate-50 disabled:opacity-50"
+                    onClick={async (e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      const newPage = Math.max(0, adminRecentSessionsPage - 1);
+                      setAdminRecentSessionsPage(newPage);
+                      await getAdminRecentSessions({ page: newPage, pageSize: ADMIN_PAGE_SIZE });
+                    }}
+                    disabled={adminRecentSessionsPage === 0}
+                  >
+                    Previous
+                  </button>
+                  <span>
+                    Page {adminRecentSessionsPage + 1} of{' '}
+                    {Math.max(1, Math.ceil(adminRecentSessionsTotal / ADMIN_PAGE_SIZE))}
+                  </span>
+                  <button
+                    type="button"
+                    className="rounded-md border border-slate-200 px-3 py-1 hover:bg-slate-50 disabled:opacity-50"
+                    onClick={async (e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      const newPage = adminRecentSessionsPage + 1;
+                      if (newPage < Math.ceil(adminRecentSessionsTotal / ADMIN_PAGE_SIZE)) {
+                        setAdminRecentSessionsPage(newPage);
+                        await getAdminRecentSessions({ page: newPage, pageSize: ADMIN_PAGE_SIZE });
+                      }
+                    }}
+                    disabled={
+                      adminRecentSessionsPage + 1 >=
+                      Math.ceil(adminRecentSessionsTotal / ADMIN_PAGE_SIZE)
+                    }
+                  >
+                    Next
+                  </button>
+                </CardFooter>
+              )}
+            </Card>
+
+            <Card className="border-none shadow-lg">
+              <CardHeader>
+                <CardTitle>Activity Logs</CardTitle>
+                <CardDescription>Auditable record of session and break events</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {adminActivityLogs.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No activity recorded yet.</p>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Time</TableHead>
+                        <TableHead>Actor</TableHead>
+                        <TableHead>Action</TableHead>
+                        <TableHead>Target</TableHead>
+                        <TableHead>Details</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {adminActivityLogs.map((log) => {
+                        const actor = log.actor_id ? profilesDirectory[log.actor_id] : null;
+                        const target = log.target_user_id
+                          ? profilesDirectory[log.target_user_id]
+                          : null;
+                        return (
+                          <TableRow key={log.id}>
+                            <TableCell>{formatDateTime(log.created_at)}</TableCell>
+                            <TableCell>{actor?.email ?? 'System'}</TableCell>
+                            <TableCell className="capitalize">{log.action}</TableCell>
+                            <TableCell>{target?.email ?? '—'}</TableCell>
+                            <TableCell className="max-w-[320px] truncate text-xs text-muted-foreground">
+                              {metadataPreview(log.metadata)}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+              {adminActivityLogsTotal > ADMIN_PAGE_SIZE && (
+                <CardFooter className="flex items-center justify-between border-t border-slate-100 px-6 py-3 text-xs text-slate-500">
+                  <button
+                    type="button"
+                    className="rounded-md border border-slate-200 px-3 py-1 hover:bg-slate-50 disabled:opacity-50"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setAdminActivityLogsPage((page) => Math.max(0, page - 1));
+                    }}
+                    disabled={adminActivityLogsPage === 0}
+                  >
+                    Previous
+                  </button>
+                  <span>
+                    Page {adminActivityLogsPage + 1} of{' '}
+                    {Math.max(1, Math.ceil(adminActivityLogsTotal / ADMIN_PAGE_SIZE))}
+                  </span>
+                  <button
+                    type="button"
+                    className="rounded-md border border-slate-200 px-3 py-1 hover:bg-slate-50 disabled:opacity-50"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setAdminActivityLogsPage((page) =>
+                        page + 1 >= Math.ceil(adminActivityLogsTotal / ADMIN_PAGE_SIZE)
+                          ? page
+                          : page + 1
+                      );
+                    }}
+                    disabled={
+                      adminActivityLogsPage + 1 >=
+                      Math.ceil(adminActivityLogsTotal / ADMIN_PAGE_SIZE)
+                    }
+                  >
+                    Next
+                  </button>
+                </CardFooter>
+              )}
+            </Card>
+          </section>
+        )}
+      </div>
+
+      {/* Idle Warning Dialog */}
+      <Dialog open={showIdleWarning} onOpenChange={setShowIdleWarning}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Moon className="h-5 w-5 text-amber-500" />
+              You've been idle for 5 minutes
+            </DialogTitle>
+            <DialogDescription>
+              You've been inactive for 5 minutes. This time is not being counted as productive work time.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <div className="rounded-lg bg-amber-50 border border-amber-200 p-4">
+              <p className="text-sm text-amber-800 mb-2">
+                <strong>Current Status:</strong>
+              </p>
+              <div className="space-y-1 text-sm text-amber-700">
+                <div className="flex justify-between">
+                  <span>Active Time:</span>
+                  <span className="font-mono font-semibold">{formatTimer(activityTracker.activeTime)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Idle Time:</span>
+                  <span className="font-mono font-semibold">{formatTimer(activityTracker.idleTime)}</span>
+                </div>
+              </div>
+            </div>
+            <p className="text-xs text-slate-500 mt-4">
+              Move your mouse or type to resume tracking active time.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setShowIdleWarning(false);
+              }}
+            >
+              Dismiss
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+};
+
+export default TimeTracking;
+

@@ -1,19 +1,32 @@
 import { Link, Outlet, useLocation } from "react-router-dom";
 import { SidebarProvider, Sidebar, SidebarHeader, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarMenu, SidebarMenuItem, SidebarMenuButton, SidebarFooter, SidebarTrigger } from "@/components/ui/sidebar";
-import { Users, LayoutDashboard, Fingerprint, Clock } from "lucide-react";
+import { Users, LayoutDashboard, Fingerprint, Clock, List, Calendar, Activity, History } from "lucide-react";
 import { NavUser } from "@/components/nav-user";
 import { ROUTES_FRONTEND } from "@/constant";
 import { useAuth } from "@/hooks/useAuth";
-import { Badge } from "@/components/ui/badge";
 
-const menuItems = [
-  { title: "Dashboard", id: "dashboard", icon: LayoutDashboard, path: ROUTES_FRONTEND.DASHBOARD },
-  { title: "Team", id: "team", icon: Users, path: ROUTES_FRONTEND.TEAM },
-  { title: "Time Tracking", id: "time-tracking", icon: Clock, path: ROUTES_FRONTEND.TIME_TRACKING },
-];
+type SidebarProps = {
+  userRole: string | null
+}
 
-function AppSidebar() {
+function AppSidebar({ userRole }: SidebarProps) {
   const location = useLocation();
+
+  console.log("userRole", userRole)
+  // Build menu items based on user role
+  const menuItems = [
+    { title: "Dashboard", id: "dashboard", icon: LayoutDashboard, path: ROUTES_FRONTEND.DASHBOARD },
+    ...(userRole === 'admin' || userRole === 'manager'
+      ? [
+          { title: "Team", id: "team", icon: Users, path: ROUTES_FRONTEND.TEAM },
+          { title: "Active Sessions", id: "active-sessions", icon: Activity, path: ROUTES_FRONTEND.TIME_TRACKING },
+          { title: "Attendance", id: "attendance", icon: Calendar, path: ROUTES_FRONTEND.ATTENDANCE },
+          { title: "Activity Logs", id: "activity-logs", icon: List, path: ROUTES_FRONTEND.ACTIVITY_LOGS },
+        ]
+      : []),
+    { title: "Time Tracking", id: "time-tracking", icon: Clock, path: ROUTES_FRONTEND.TIME_TRACKING },
+    { title: "Session History", id: "session-history", icon: History, path: ROUTES_FRONTEND.SESSION_HISTORY },
+  ];
   return (
     <Sidebar className="bg-white text-foreground border-r border-border">
       {/* Header */}
@@ -80,28 +93,58 @@ const Dashboard = () => {
   const getRoleBadge = (role: string | null) => {
     if (!role) return null
 
-    const roleMap: Record<string, { label: string; variant: 'default' | 'secondary' | 'outline' | 'destructive' }> = {
-      'manager': { label: 'Manager', variant: 'default' },
-      'admin': { label: 'Admin', variant: 'destructive' },
-      'annotator': { label: 'Annotator', variant: 'secondary' },
-      'reviewer': { label: 'Reviewer', variant: 'outline' }
-    };
-    
-    const config = roleMap[role] || { label: role, variant: 'secondary' as const };
-    return <Badge variant={config.variant}>{config.label}</Badge>;
-  };
+    const roleStyles: Record<string, { label: string; classes: string }> = {
+      admin: {
+        label: 'Admin',
+        classes: 'bg-rose-100 text-rose-600 border border-rose-200',
+      },
+      manager: {
+        label: 'Manager',
+        classes: 'bg-sky-100 text-sky-600 border border-sky-200',
+      },
+      reviewer: {
+        label: 'Reviewer',
+        classes: 'bg-emerald-100 text-emerald-600 border border-emerald-200',
+      },
+      annotator: {
+        label: 'Annotator',
+        classes: 'bg-amber-100 text-amber-600 border border-amber-200',
+      },
+    }
+
+    const { label, classes } = roleStyles[role] || {
+      label: role,
+      classes: 'bg-slate-100 text-slate-600 border border-slate-200',
+    }
+
+    return (
+      <span
+        className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-medium uppercase tracking-wide ${classes}`}
+      >
+        <span className="h-2 w-2 rounded-full bg-current opacity-70" />
+        {label}
+      </span>
+    )
+  }
   
   return (
     <SidebarProvider>
       <div className="flex min-h-screen w-full bg-muted/20">
-        <AppSidebar />
+        <AppSidebar userRole={userRole} />
         <main className="flex-1 bg-background">
           {/* Top nav bar */}
             <div className="sticky top-0 z-10 border-b border-border bg-white/90 backdrop-blur">
               <div className="flex h-14 w-full items-center justify-between px-6">
                 <SidebarTrigger />
                 <div className="flex items-center gap-2">
-                  {userRole ? getRoleBadge(userRole) : <Badge variant="outline" className="mx-3 text-lg">Guest</Badge>}
+                  {userRole ? (
+                    getRoleBadge(userRole)
+                  ) : (
+                    <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-medium uppercase tracking-wide text-slate-600">
+                      <span className="h-2 w-2 rounded-full bg-slate-400" />
+                      Guest
+                    </span>
+                  )}
                 </div>
               </div>
             </div>

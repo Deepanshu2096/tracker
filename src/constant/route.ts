@@ -35,7 +35,10 @@ export const ROUTES_FRONTEND = {
     PROJECT_DELIVERY: '/projects/:projectId/delivery',
     PROJECT_TEAM: '/projects/:projectId/team',
     TEAM:'/team',
+    ACTIVITY_LOGS: '/activity-logs',
     DELIVERY: '/delivery',
     DELIVERY_TASKS: '/delivery/:deliveryBatchId/tasks',
     TIME_TRACKING: '/time-tracking',
+    ATTENDANCE: '/attendance',
+    SESSION_HISTORY: '/session-history',
 }

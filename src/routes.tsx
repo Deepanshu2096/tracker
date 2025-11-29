@@ -9,8 +9,12 @@ import Layout from './components/utils/Layout';
 import Dashboard from './components/pages/Dashboard'
 import Team from './components/pages/Team';
 import TimeTracking from './components/pages/TimeTracking';
+import ActivityLogs from './components/pages/ActivityLogs';
+import Attendance from './components/pages/Attendance';
+import SessionHistory from './components/pages/SessionHistory';
 
 import { PrivateRoute } from './components/utils/PrivateRoute';
+import { RoleBasedRoute } from './components/utils/RoleBasedRoute';
 
 export const router = createBrowserRouter([
   {
@@ -39,12 +43,30 @@ export const router = createBrowserRouter([
             element: <Dashboard />,
           },
           {
-            path: ROUTES_FRONTEND.TEAM,
-            element: <Team />,
-          },
-          {
             path: ROUTES_FRONTEND.TIME_TRACKING,
             element: <TimeTracking />,
+          },
+          {
+            path: ROUTES_FRONTEND.SESSION_HISTORY,
+            element: <SessionHistory />,
+          },
+          // Admin/Manager only routes
+          {
+            element: <RoleBasedRoute allowedRoles={['admin', 'manager']} />,
+            children: [
+              {
+                path: ROUTES_FRONTEND.TEAM,
+                element: <Team />,
+          },
+          {
+            path: ROUTES_FRONTEND.ACTIVITY_LOGS,
+            element: <ActivityLogs />,
+              },
+              {
+                path: ROUTES_FRONTEND.ATTENDANCE,
+                element: <Attendance />,
+              },
+            ],
           },
           {
             path: "*",
