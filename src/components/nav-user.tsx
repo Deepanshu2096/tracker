@@ -53,8 +53,8 @@ export function NavUser() {
 										<AvatarFallback className="rounded-lg">N</AvatarFallback>
 									</Avatar>
 									<div className="grid flex-1 text-left text-sm leading-tight">
-										<span className="truncate font-medium">{user?.email?.split("@")[0].toUpperCase()}</span>
-										<span className="truncate text-xs">{user?.email}</span>
+										<span className="truncate font-medium">{user?.email?.split("@")[0]?.toUpperCase() ?? 'User'}</span>
+										<span className="truncate text-xs">{user?.email ?? ''}</span>
 									</div>
 									<ChevronsUpDown className="ml-auto size-4" />
 								</SidebarMenuButton>
@@ -71,8 +71,8 @@ export function NavUser() {
 											<AvatarFallback className="rounded-lg">N</AvatarFallback>
 										</Avatar>
 										<div className="grid flex-1 text-left text-sm leading-tight">
-											<span className="truncate font-medium">{user?.user_metadata.name}</span>
-											<span className="truncate text-xs">{user?.email}</span>
+											<span className="truncate font-medium">{user?.user_metadata?.name || user?.email?.split("@")[0]?.toUpperCase() || 'User'}</span>
+											<span className="truncate text-xs">{user?.email ?? ''}</span>
 										</div>
 									</div>
 								</DropdownMenuLabel>
@@ -80,13 +80,11 @@ export function NavUser() {
 								<DropdownMenuGroup>
 								</DropdownMenuGroup>
 							
-								<DropdownMenuItem>
-									<DropdownMenuItem >
-										<AlertDialogTrigger className="flex items-center gap-2 w-full">
+								<DropdownMenuItem asChild>
+									<AlertDialogTrigger className="flex items-center gap-2 w-full cursor-pointer">
 											<LogOut />
 											Logout
 										</AlertDialogTrigger>
-									</DropdownMenuItem>
 								</DropdownMenuItem>
 							</DropdownMenuContent>
 						</DropdownMenu>

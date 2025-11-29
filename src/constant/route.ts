@@ -39,4 +39,6 @@ export const ROUTES_FRONTEND = {
     DELIVERY: '/delivery',
     DELIVERY_TASKS: '/delivery/:deliveryBatchId/tasks',
     TIME_TRACKING: '/time-tracking',
+    ATTENDANCE: '/attendance',
+    SESSION_HISTORY: '/session-history',
 }

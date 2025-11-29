@@ -1,7 +1,13 @@
-import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { ROUTES_FRONTEND } from '@/constant'
+import { useEffect, useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
 import { supabase } from '@/integrations/supabase/client'
 import { useAuth } from '@/hooks/useAuth'
 
@@ -12,18 +18,7 @@ type TeamMember = {
   role: string | null
 }
 
-const getInitials = (name: string | null | undefined, email: string | null | undefined) => {
-  if (name) {
-    const parts = name.split(' ').filter(Boolean)
-    return parts.slice(0, 2).map(part => part[0]?.toUpperCase() ?? '').join('')
-  }
-  if (email) {
-    return email.slice(0, 2).toUpperCase()
-  }
-  return 'AN'
-}
-
-const rolePillClasses: Record<string, string> = {
+const roleBadgeClasses: Record<string, string> = {
   admin: 'bg-rose-100 text-rose-600 border border-rose-200',
   manager: 'bg-sky-100 text-sky-600 border border-sky-200',
   reviewer: 'bg-emerald-100 text-emerald-600 border border-emerald-200',
@@ -31,8 +26,8 @@ const rolePillClasses: Record<string, string> = {
 }
 
 const RoleBadge = ({ role }: { role: string | null }) => {
-  if (!role) return null
-  const classes = rolePillClasses[role] || 'bg-slate-100 text-slate-600 border border-slate-200'
+  if (!role) return <span className="text-muted-foreground">—</span>
+  const classes = roleBadgeClasses[role] || 'bg-slate-100 text-slate-600 border border-slate-200'
   return (
     <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-medium uppercase tracking-wide ${classes}`}>
       <span className="h-2 w-2 rounded-full bg-current opacity-70" />
@@ -46,9 +41,8 @@ export default function Team() {
   const [members, setMembers] = useState<TeamMember[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const navigate = useNavigate()
 
-  const isAdmin = userRole === 'admin'
+  const isAdmin = userRole === 'admin' || userRole === 'manager'
 
   useEffect(() => {
     if (!user) return
@@ -86,142 +80,84 @@ export default function Team() {
     fetchTeam()
   }, [user, isAdmin])
 
-  useEffect(() => {
-    if (!loading && !isAdmin) {
-      navigate(ROUTES_FRONTEND.TIME_TRACKING, { replace: true })
-    }
-  }, [loading, isAdmin, navigate])
-
-  const admins = useMemo(
-    () => members.filter(member => member.role === 'admin'),
-    [members]
-  )
-
-  const teammates = useMemo(
-    () => members.filter(member => member.role !== 'admin'),
-    [members]
-  )
-
-  if (!isAdmin) {
-    return null
-  }
-
   return (
-    <div className="mx-auto w-full max-w-4xl space-y-10 py-10 px-6">
+    <div className="mx-auto w-full max-w-6xl space-y-6 py-8 px-6">
       <header className="space-y-2">
-        <p className="text-xs uppercase tracking-[0.35em] text-muted-foreground">
-          People &amp; Culture
-        </p>
-        <h1 className="text-4xl font-semibold tracking-tight text-primary">
-          Meet the Anvesana Team
+        <h1 className="text-3xl font-semibold tracking-tight text-primary">
+          Team Members
         </h1>
-        <p className="text-sm text-muted-foreground max-w-xl">
-          A snapshot of everyone in your workspace. Roles and access levels are pulled directly from Supabase profiles.
+        <p className="text-sm text-muted-foreground">
+          {isAdmin
+            ? 'View and manage all team members in your workspace.'
+            : 'View your profile information.'}
         </p>
       </header>
 
-      {loading ? (
-        <div className="rounded-xl border border-dashed border-muted-foreground/30 bg-muted/50 p-6 text-sm text-muted-foreground">
-          Loading team members…
-        </div>
-      ) : error ? (
-        <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-6 text-sm text-destructive">
-          {error}
-        </div>
-      ) : (
-        <>
-          {isAdmin && (
-            <section className="space-y-3">
-              <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
-                Admin Panel
-              </h2>
-              <div className="grid gap-4 sm:grid-cols-2">
-                {admins.length === 0 ? (
-                  <p className="col-span-full text-sm text-muted-foreground">
-                    No admins yet. Promote a teammate to give them full visibility.
-                  </p>
-                ) : (
-                  admins.map(member => (
-                    <Card key={member.id} className="border border-rose-100 shadow-sm">
-                      <CardHeader className="flex flex-row items-center gap-3 pb-2">
-                        <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-rose-100 text-rose-600 font-semibold">
-                          {getInitials(member.full_name, member.email)}
-                        </div>
-                        <div>
-                          <CardTitle className="text-base font-semibold">
-                            {member.full_name || member.email || 'Admin'}
-                          </CardTitle>
-                          <CardDescription>{member.email}</CardDescription>
-                        </div>
-                      </CardHeader>
-                      <CardContent className="flex flex-col gap-3 pt-0">
-                        <RoleBadge role={member.role} />
-                        <p className="text-xs text-muted-foreground">
-                          Can view and manage all sessions, breaks, and activity logs.
-                        </p>
-                      </CardContent>
-                    </Card>
-                  ))
-                )}
-              </div>
-            </section>
-          )}
-
-          <section className="space-y-3">
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
-              {isAdmin ? 'Team Members' : 'Your Profile'}
-            </h2>
-            <div className="grid gap-4 sm:grid-cols-2">
-              {(isAdmin ? teammates : members).length === 0 ? (
-                <p className="col-span-full text-sm text-muted-foreground">
-                  {isAdmin
-                    ? 'No team members found yet. Invite users to get started.'
-                    : 'No additional details available for your profile.'}
-                </p>
-              ) : (
-                (isAdmin ? teammates : members).map(member => (
-                  <Card key={member.id} className="border-muted shadow-sm">
-                    <CardHeader className="flex flex-row items-center gap-3 pb-2">
-                      <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-primary/10 text-primary font-semibold">
-                        {getInitials(member.full_name, member.email)}
-                      </div>
-                      <div>
-                        <CardTitle className="text-base font-semibold">
-                          {member.full_name || member.email || 'Teammate'}
-                        </CardTitle>
-                        <CardDescription>{member.email}</CardDescription>
-                      </div>
-                    </CardHeader>
-                    <CardContent className="flex flex-col gap-3 pt-0">
-                      <RoleBadge role={member.role} />
-                      <p className="text-xs text-muted-foreground">
-                        {member.role === 'annotator'
-                          ? 'Tracks sessions and breaks throughout the workday.'
-                          : member.role === 'reviewer'
-                          ? 'Reviews and verifies completed tasks.'
-                          : member.role === 'manager'
-                          ? 'Oversees productivity and workload.'
-                          : member.role === 'admin'
-                          ? 'Full access to analytics and settings.'
-                          : 'Team member'}
-                      </p>
-                    </CardContent>
-                  </Card>
-                ))
-              )}
+      <Card>
+        <CardHeader>
+          <CardTitle>Team</CardTitle>
+          <CardDescription>
+            {isAdmin
+              ? `Total members: ${members.length}`
+              : 'Your profile details'}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {loading ? (
+            <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
+              Loading team members…
             </div>
-          </section>
-        </>
-      )}
+          ) : error ? (
+            <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-6 text-sm text-destructive">
+              {error}
+            </div>
+          ) : members.length === 0 ? (
+            <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
+              {isAdmin
+                ? 'No team members found yet. Invite users to get started.'
+                : 'No profile information available.'}
+            </div>
+          ) : (
+            <div className="rounded-md border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-[30%]">Name</TableHead>
+                    <TableHead className="w-[40%]">Email</TableHead>
+                    <TableHead className="w-[30%]">Role</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {members.map((member) => (
+                    <TableRow key={member.id}>
+                      <TableCell className="font-medium">
+                        {member.full_name || member.email || 'Unknown'}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {member.email || '—'}
+                      </TableCell>
+                      <TableCell>
+                        <RoleBadge role={member.role} />
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {isAdmin && (
-        <footer className="rounded-xl border border-dashed border-muted-foreground/30 bg-muted/50 p-6 space-y-2">
-          <h3 className="text-lg font-semibold text-primary">Manage access</h3>
-          <p className="text-sm text-muted-foreground">
-            Admins can promote or demote teammates by updating the <code>role</code> column in Supabase.
-            The team page updates automatically based on profile roles.
-          </p>
-        </footer>
+        <Card className="border-dashed">
+          <CardHeader>
+            <CardTitle>Manage Access</CardTitle>
+            <CardDescription>
+              Admins can promote or demote teammates by updating the <code>role</code> column in Supabase.
+              The team page updates automatically based on profile roles.
+            </CardDescription>
+          </CardHeader>
+        </Card>
       )}
     </div>
   )

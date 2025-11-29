@@ -1,6 +1,6 @@
 import { Link, Outlet, useLocation } from "react-router-dom";
 import { SidebarProvider, Sidebar, SidebarHeader, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarMenu, SidebarMenuItem, SidebarMenuButton, SidebarFooter, SidebarTrigger } from "@/components/ui/sidebar";
-import { Users, LayoutDashboard, Fingerprint, Clock, List } from "lucide-react";
+import { Users, LayoutDashboard, Fingerprint, Clock, List, Calendar, Activity, History } from "lucide-react";
 import { NavUser } from "@/components/nav-user";
 import { ROUTES_FRONTEND } from "@/constant";
 import { useAuth } from "@/hooks/useAuth";
@@ -13,15 +13,19 @@ function AppSidebar({ userRole }: SidebarProps) {
   const location = useLocation();
 
   console.log("userRole", userRole)
+  // Build menu items based on user role
   const menuItems = [
     { title: "Dashboard", id: "dashboard", icon: LayoutDashboard, path: ROUTES_FRONTEND.DASHBOARD },
-    ...(userRole === 'admin'
+    ...(userRole === 'admin' || userRole === 'manager'
       ? [
           { title: "Team", id: "team", icon: Users, path: ROUTES_FRONTEND.TEAM },
+          { title: "Active Sessions", id: "active-sessions", icon: Activity, path: ROUTES_FRONTEND.TIME_TRACKING },
+          { title: "Attendance", id: "attendance", icon: Calendar, path: ROUTES_FRONTEND.ATTENDANCE },
           { title: "Activity Logs", id: "activity-logs", icon: List, path: ROUTES_FRONTEND.ACTIVITY_LOGS },
         ]
       : []),
     { title: "Time Tracking", id: "time-tracking", icon: Clock, path: ROUTES_FRONTEND.TIME_TRACKING },
+    { title: "Session History", id: "session-history", icon: History, path: ROUTES_FRONTEND.SESSION_HISTORY },
   ];
   return (
     <Sidebar className="bg-white text-foreground border-r border-border">
