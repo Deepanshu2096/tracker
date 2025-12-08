@@ -173,7 +173,7 @@ export default function Dashboard() {
 
   return (
     <div className="mx-auto flex max-w-5xl flex-col gap-8 py-10 px-6">
-      <section className="rounded-3xl bg-gradient-to-r from-sky-500 via-sky-600 to-indigo-600 p-8 text-white shadow-xl">
+      <section className="rounded-3xl bg-gradient-to-r from-[var(--color-purple-600)] via-purple-600 to-purple-700 p-8 text-white shadow-xl">
         <p className="text-xs uppercase tracking-[0.35em] text-white/70">
           Welcome Back
         </p>
@@ -181,17 +181,17 @@ export default function Dashboard() {
           Overview at a Glance
         </h1>
         <p className="mt-3 max-w-2xl text-sm text-white/80">
-          Quickly monitor team activity, review today’s performance, and jump into time tracking or team management in a single click.
+          Quickly monitor team activity, review today's performance, and jump into time tracking or team management in a single click.
         </p>
         <div className="mt-6 flex flex-wrap gap-3">
           <Button
             asChild
-            className="bg-sky-500 text-white shadow-lg hover:bg-sky-500/90"
+            className="bg-[var(--color-purple-600)] text-white shadow-lg hover:bg-[var(--color-purple-700)] font-medium px-6 py-2 transition-colors"
           >
             <Link to={ROUTES_FRONTEND.TIME_TRACKING}>Go to Time Tracking</Link>
           </Button>
           {isAdmin && (
-            <Button asChild variant="outline" className="border-white text-white hover:bg-white/10">
+            <Button asChild variant="outline" className="border-white/80 text-white hover:bg-white/20 hover:border-white hover:text-white font-medium px-6 py-2 transition-colors">
               <Link to={ROUTES_FRONTEND.TEAM}>Manage Team</Link>
             </Button>
           )}

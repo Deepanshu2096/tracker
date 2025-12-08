@@ -241,7 +241,7 @@ impl ActivityTracker {
                 }
 
                 // Check for mouse button presses (system-wide)
-                if mouse.button_pressed {
+                if mouse.button_pressed.iter().any(|&pressed| pressed) {
                     has_activity = true;
                 }
 

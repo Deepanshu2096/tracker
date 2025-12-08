@@ -1,6 +1,6 @@
 import { Link, Outlet, useLocation } from "react-router-dom";
 import { SidebarProvider, Sidebar, SidebarHeader, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarMenu, SidebarMenuItem, SidebarMenuButton, SidebarFooter, SidebarTrigger } from "@/components/ui/sidebar";
-import { Users, LayoutDashboard, Fingerprint, Clock, List, Calendar, Activity, History } from "lucide-react";
+import { Users, LayoutDashboard, Clock, List, Calendar, Activity, History } from "lucide-react";
 import { NavUser } from "@/components/nav-user";
 import { ROUTES_FRONTEND } from "@/constant";
 import { useAuth } from "@/hooks/useAuth";
@@ -28,19 +28,19 @@ function AppSidebar({ userRole }: SidebarProps) {
     { title: "Session History", id: "session-history", icon: History, path: ROUTES_FRONTEND.SESSION_HISTORY },
   ];
   return (
-    <Sidebar className="bg-white text-foreground border-r border-border">
+    <Sidebar className="text-foreground border-r border-border" style={{ backgroundColor: 'oklch(98.5% 0 0)' }}>
       {/* Header */}
       <SidebarHeader className="px-4 py-5">
         <div className="flex items-center gap-3">
           <div className="rounded-xl bg-primary/10 p-2 text-primary">
-            <Fingerprint className="h-6 w-6" strokeWidth={2.5} />
+          <img src="/B-logo.svg" alt="BergFlow Logo" className="h-10 mt-2 w-auto text-primary my-auto rotate-y-180" /> 
           </div>
           <div className="leading-tight">
             <span className="block text-lg font-semibold text-foreground">
               Anvesana
             </span>
             <span className="text-[0.65rem] uppercase tracking-[0.32em] text-muted-foreground">
-              by Anvesana
+              by BergAi
             </span>
           </div>
         </div>
@@ -129,9 +129,9 @@ const Dashboard = () => {
   
   return (
     <SidebarProvider>
-      <div className="flex min-h-screen w-full bg-muted/20">
+      <div className="flex min-h-screen w-full bg-white">
         <AppSidebar userRole={userRole} />
-        <main className="flex-1 bg-background">
+        <main className="flex-1 bg-white">
           {/* Top nav bar */}
             <div className="sticky top-0 z-10 border-b border-border bg-white/90 backdrop-blur">
               <div className="flex h-14 w-full items-center justify-between px-6">

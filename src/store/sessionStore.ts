@@ -316,7 +316,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     set({ loading: true, error: null });
     try {
       const page = pagination?.page ?? get().adminRecentSessionsPage;
-      const pageSize = pagination?.pageSize ?? 8;
+      const pageSize = pagination?.pageSize ?? 10;
       const from = page * pageSize;
       const to = from + pageSize - 1;
 

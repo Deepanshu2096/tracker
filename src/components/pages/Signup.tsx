@@ -1,26 +1,16 @@
-import { useEffect, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
-import { UserPlus, AlertCircle, CheckCircle } from 'lucide-react';
+import { UserPlus } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 
 import { supabase } from '@/integrations/supabase/client';
 import { ROUTES_FRONTEND } from '@/constant';
 import { useToast } from '@/hooks/use-toast';
-
-interface InviteData {
-  token: string;
-  email: string;
-  role: string;
-  name: string | null;
-  org_id: string;
-  expires_at: string;
-}
 
 interface SignupFormData {
   email: string;
@@ -30,12 +20,7 @@ interface SignupFormData {
 }
 
 export default function Signup() {
-  const [searchParams] = useSearchParams();
-  const token = searchParams.get('token');
-  const [inviteData, setInviteData] = useState<InviteData | null>(null);
-  const [loading, setLoading] = useState(true);
   const [signingUp, setSigningUp] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const { toast } = useToast()
   const navigate = useNavigate();
 
@@ -43,7 +28,6 @@ export default function Signup() {
     register,
     handleSubmit,
     formState: { errors, isValid },
-    setValue,
     watch
   } = useForm<SignupFormData>({
     mode: 'onChange',
@@ -55,66 +39,7 @@ export default function Signup() {
     }
   });
 
-  useEffect(() => {
-    if (!token) {
-      setError('No invite token provided');
-      setLoading(false);
-      return;
-    }
-
-    fetchInviteData();
-  }, [token]);
-
-  const fetchInviteData = async () => {
-    try {
-      if (!token) {
-        setError('No invite token provided');
-        setLoading(false);
-        return;
-      }
-
-      const { data, error } = await supabase
-        .from('invites')
-        .select('*')
-        .eq('token', token)
-        .single();
-
-      if (error) {
-        throw error;
-      }
-
-      if (!data) {
-        setError('Invalid or expired invite token');
-        setLoading(false);
-        return;
-      }
-
-      // Check if invite is expired
-      if (new Date(data.expires_at) < new Date()) {
-        setError('This invite has expired');
-        setLoading(false);
-        return;
-      }
-
-      setInviteData(data as InviteData);
-      // Pre-fill the email and name from invite
-      setValue('email', data.email);
-      if (data.name) {
-        setValue('name', data.name);
-      }
-      setLoading(false);
-    } catch (error: any) {
-      console.error('Error fetching invite:', error);
-      setError('Failed to load invite data');
-      setLoading(false);
-    }
-  };
-
   const onSubmit = async (data: SignupFormData) => {
-
-    if (!inviteData) return;
-    console.log('invitedata', inviteData);
-
     setSigningUp(true);
     try {
       // Check if passwords match
@@ -124,16 +49,7 @@ export default function Signup() {
           description: "Passwords do not match",
           variant: "destructive",
         });
-        return;
-      }
-
-      // Check if email matches invite email
-      if (data.email !== inviteData.email) {
-        toast({
-          title: "Error",
-          description: "Email must match the invite email",
-          variant: "destructive",
-        });
+        setSigningUp(false);
         return;
       }
 
@@ -144,118 +60,126 @@ export default function Signup() {
       });
 
       if (signUpError) {
-        console.log('signUpError', signUpError.message, signUpError.message.includes('Invalid login credentials'));
+        // Handle connection errors
+        if (signUpError.message.includes('Cannot connect to Supabase') || 
+            signUpError.message.includes('Failed to fetch') ||
+            signUpError.message.includes('network')) {
+          toast({
+            title: "Connection Error",
+            description: "Unable to connect to the server. Please check your internet connection and try again.",
+            variant: "destructive",
+          });
+          setSigningUp(false);
+          return;
+        }
 
-        // Handle specific signup errors
+        // Handle email rate limit error
+        if (signUpError.code === 'over_email_send_rate_limit' || 
+            signUpError.message.includes('email rate limit exceeded') ||
+            signUpError.message.includes('rate limit')) {
+          toast({
+            title: "Email Rate Limit",
+            description: "Too many emails sent. Please wait a few minutes before trying again, or contact support if you need immediate access.",
+            variant: "destructive",
+          });
+          setSigningUp(false);
+          return;
+        }
+
+        // Handle account exists error
         if (signUpError.message.includes('already registered') ||
-          signUpError.message.includes('Invalid login credentials') ||
           signUpError.message.includes('already been registered')) {
           toast({
             title: "Account Exists",
             description: "An account with this email already exists. Please sign in instead.",
             variant: "destructive",
           });
+          setSigningUp(false);
           return;
         }
-        throw signUpError;
+        
+        toast({
+          title: "Error",
+          description: signUpError.message || "Failed to create account. Please try again.",
+          variant: "destructive",
+        });
+        setSigningUp(false);
+        return;
       }
 
       if (authData.user) {
-        const { data, error } = await supabase.rpc('accept_invite', { p_token: inviteData.token });
-        console.log(data,error);
-        
-        toast({
-          title: "Success",
-          description: "Account created successfully!",
-        });
+        // Create profile with employee role
+        try {
+          const { error: profileError } = await supabase
+            .from('profiles')
+            .insert({
+              id: authData.user.id, // id is the primary key and references auth.users(id)
+              email: data.email,
+              full_name: data.name, // Use full_name instead of name
+              role: 'employee' // Use 'employee' role from user_role enum
+            });
 
-        // Refresh session to get updated JWT claims
-        await supabase.auth.refreshSession();
-        navigate(ROUTES_FRONTEND.DASHBOARD);
+          if (profileError && 
+              !profileError.message.includes('duplicate') && 
+              !profileError.message.includes('unique')) {
+            console.error('Error creating profile:', profileError);
+          }
+        } catch (profileErr: any) {
+          if (!profileErr.message?.includes('duplicate') && 
+              !profileErr.message?.includes('unique')) {
+            console.error('Profile creation error:', profileErr);
+          }
+        }
+        
+        // Check if we have a session (user is logged in)
+        if (authData.session) {
+          toast({
+            title: "Success",
+            description: "Account created successfully!",
+          });
+          await supabase.auth.refreshSession();
+          navigate(ROUTES_FRONTEND.DASHBOARD);
+        } else {
+          // No session - email confirmation might be required
+          toast({
+            title: "Success",
+            description: "Account created! Please sign in to continue.",
+          });
+          navigate('/login');
+        }
       }
     } catch (error: any) {
-      console.error('Error signing up:', error);
-      toast({
-        title: "Error",
-        description: "Failed to create account. Please try again.",
-        variant: "destructive",
-      });
+      if (error?.message?.includes('Cannot connect to Supabase') || 
+          error?.message?.includes('Failed to fetch') ||
+          error?.message?.includes('network')) {
+        toast({
+          title: "Connection Error",
+          description: "Unable to connect to the server. Please check your internet connection and try again.",
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Error",
+          description: error?.message || "Failed to create account. Please try again.",
+          variant: "destructive",
+        });
+      }
     } finally {
       setSigningUp(false);
     }
   };
 
-  const getRoleBadge = (role: string) => {
-    const roleMap: Record<string, { label: string; variant: 'default' | 'secondary' | 'outline' }> = {
-      'manager': { label: 'Manager', variant: 'default' },
-      'admin': { label: 'Admin', variant: 'default' },
-      'annotator': { label: 'Annotator', variant: 'secondary' },
-      'reviewer': { label: 'Reviewer', variant: 'outline' }
-    };
-
-    const config = roleMap[role] || { label: role, variant: 'secondary' as const };
-    return <Badge variant={config.variant}>{config.label}</Badge>;
-  };
-
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-950">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600 dark:text-gray-400">Loading invite...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-950">
-        <Card className="w-full max-w-md">
-          <CardHeader className="text-center">
-            <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
-            <CardTitle className="text-xl text-red-600">Invalid Invite</CardTitle>
-            <CardDescription>
-              {error}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="text-center">
-            <p className="text-sm text-gray-600 mb-4">
-              This is an invite-only platform. Please ask your organization to send you a personal invite link.
-            </p>
-            <Button onClick={() => navigate('/login')} variant="outline">
-              Go to Login
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
-
-  if (!inviteData) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-950">
-        <div className="text-center">
-          <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
-          <p className="text-gray-600 dark:text-gray-400">No invite data found</p>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="min-h-screen grid grid-cols-1 lg:grid-cols-2 bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-950">
-      {/* Left side - brand / mission */}
+      {/* Left side - brand */}
       <div className="hidden lg:flex items-center justify-center bg-gradient-to-br from-blue-900 to-purple-900 text-white px-10">
         <div className="space-y-6 max-w-md">
           <div className="flex items-center space-x-3">
             <h1 className="text-2xl font-semibold tracking-wide p-2 px-4 border rounded-xl">Anvesana</h1>
           </div>
-          <h2 className="text-4xl font-bold leading-tight">
-            Join the team!
-          </h2>
+          <h2 className="text-4xl font-bold leading-tight">Get Started</h2>
           <p className="text-lg text-slate-200">
-            Create your account and start collaborating with your team on Anvesana, the AI-powered workspace for efficient, scalable data annotation.
+            Create your account and start using Anvesana
           </p>
         </div>
       </div>
@@ -267,23 +191,10 @@ export default function Signup() {
             <UserPlus className="h-12 w-12 text-purple-500 mx-auto mb-4" />
             <CardTitle className="text-2xl">Create Your Account</CardTitle>
             <CardDescription>
-              Complete your registration to join Anvesana
+              Create your account to get started with Anvesana
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {/* Invite Info */}
-            <div className="mb-6 p-4 bg-purple-50 rounded-lg border border-purple-200">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm font-medium text-purple-700">Invite Details:</span>
-                {getRoleBadge(inviteData.role)}
-              </div>
-              <div className="text-sm text-purple-600">
-                <p>Email: {inviteData.email}</p>
-                {inviteData.name && <p>Name: {inviteData.name}</p>}
-                <p>Expires: {new Date(inviteData.expires_at).toLocaleDateString()}</p>
-              </div>
-            </div>
-
             <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="name">Full Name</Label>
@@ -315,7 +226,6 @@ export default function Signup() {
                     }
                   })}
                   className={errors.email ? 'border-red-500' : ''}
-                  disabled={true} // Email is pre-filled and locked from invite
                 />
                 {errors.email && (
                   <p className="text-sm text-red-500">{errors.email.message}</p>

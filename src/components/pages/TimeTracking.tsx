@@ -27,7 +27,6 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import {
@@ -46,7 +45,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 
-type UserRole = 'admin' | 'manager' | 'annotator' | 'reviewer';
+type UserRole = 'admin' | 'employee';
 
 type ProfileRecord = {
   id: string;
@@ -72,9 +71,11 @@ const BREAK_OPTIONS: Array<{ value: BreakRecord['type']; label: string }> = [
 ];
 
 const OTHER_BREAK_OPTIONS = [
-  { value: 'break1', label: 'Break 1' },
-  { value: 'break2', label: 'Break 2' },
-  { value: 'break3', label: 'Break 3' },
+  { value: 'training', label: 'Training' },
+  { value: 'refresher', label: 'Refresher' },
+  { value: 'floor_activity', label: 'Floor Activity' },
+  { value: 'meeting', label: 'Meeting' },
+  { value: 'medical_break', label: 'Medical Break' },
 ];
 
 const formatDateTime = (value: string | null) => {
@@ -86,12 +87,10 @@ const formatDateTime = (value: string | null) => {
 
 const formatDuration = (seconds: number | null | undefined) => {
   if (seconds == null || Number.isNaN(seconds)) return '—';
-
   const absolute = Math.max(0, seconds);
   const hours = Math.floor(absolute / 3600);
   const minutes = Math.floor((absolute % 3600) / 60);
   const remainingSeconds = absolute % 60;
-
   const parts = [];
   if (hours) parts.push(`${hours}h`);
   if (minutes) parts.push(`${minutes}m`);
@@ -101,12 +100,10 @@ const formatDuration = (seconds: number | null | undefined) => {
 
 const formatTimer = (seconds: number | null | undefined) => {
   if (seconds == null || Number.isNaN(seconds)) return '00:00:00';
-
   const absolute = Math.max(0, seconds);
   const hours = Math.floor(absolute / 3600);
   const minutes = Math.floor((absolute % 3600) / 60);
   const remainingSeconds = absolute % 60;
-
   return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
 };
 
@@ -115,15 +112,6 @@ const getLiveDurationSeconds = (startedAt: string) => {
   const now = Date.now();
   if (Number.isNaN(start)) return 0;
   return Math.max(0, Math.floor((now - start) / 1000));
-};
-
-const metadataPreview = (metadata: Record<string, unknown> | null) => {
-  if (!metadata || Object.keys(metadata).length === 0) return '—';
-  try {
-    return JSON.stringify(metadata);
-  } catch {
-    return '—';
-  }
 };
 
 const getBreakLabel = (type: BreakRecord['type']) =>
@@ -155,24 +143,22 @@ const TimeTracking = () => {
   // Break store
   const {
     activeBreak,
+    breakHistory,
     loading: breakLoading,
     error: breakError,
     startBreak,
     endBreak,
     getActiveBreak,
+    getBreakHistory,
     clearError: clearBreakError,
   } = useBreakStore();
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-
   const [profile, setProfile] = useState<ProfileRecord | null>(null);
-
   const [sessionNotes, setSessionNotes] = useState('');
-
   const [liveDurationSeconds, setLiveDurationSeconds] = useState<number | null>(null);
   const [showIdleWarning, setShowIdleWarning] = useState<boolean>(false);
-  const [showOtherBreakDropdown, setShowOtherBreakDropdown] = useState<boolean>(false);
 
   const error = sessionError || breakError;
 
@@ -193,6 +179,7 @@ const TimeTracking = () => {
   const sessionDurationLabel = sessionIsActive
     ? formatTimer(liveDurationSeconds)
     : formatDuration(currentSession?.duration_seconds);
+
   // Breaks are now independent - can start without a session
   const canStartBreak = Boolean(!activeBreak);
   const canEndBreak = Boolean(activeBreak);
@@ -221,7 +208,6 @@ const TimeTracking = () => {
     } else {
       activityTracker.stopTracking();
     }
-
     return () => {
       activityTracker.stopTracking();
     };
@@ -270,6 +256,33 @@ const TimeTracking = () => {
     return totalSeconds;
   }, [employeeSessions, liveDurationSeconds, currentSession]);
 
+  // Calculate today's total breaks (since midnight)
+  const todayTotalBreaks = useMemo(() => {
+    const now = new Date();
+    const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+    // Count breaks that started today (including active break if it started today)
+    const todayBreaks = breakHistory.filter((breakItem) => {
+      const breakDate = new Date(breakItem.started_at);
+      return breakDate >= midnight;
+    });
+
+    // Also count active break if it started today
+    let count = todayBreaks.length;
+    if (activeBreak) {
+      const activeBreakDate = new Date(activeBreak.started_at);
+      if (activeBreakDate >= midnight) {
+        // Check if it's not already in the history
+        const alreadyCounted = todayBreaks.some((b) => b.id === activeBreak.id);
+        if (!alreadyCounted) {
+          count += 1;
+        }
+      }
+    }
+
+    return count;
+  }, [breakHistory, activeBreak]);
+
   const renderBreakIcon = (type: BreakRecord['type']) => {
     const className = 'h-4 w-4';
     switch (type) {
@@ -298,28 +311,30 @@ const TimeTracking = () => {
     }
 
     if (!data) {
-      const { data: createdProfile, error: insertError } = await supabase
+      const { data: createdProfile, error: insertError } = await (supabase as any)
         .from('profiles')
         .insert({
           id: user.id,
-          email: user.email,
-          role: 'annotator' as UserRole,
-          user_id: user.id,
+          email: user.email || '',
+          full_name: user.email?.split('@')[0] || 'User',
+          role: 'employee',
         })
         .select('id, email, role')
-        .single<ProfileRecord>();
+        .single();
 
-      if (insertError) {
+      if (insertError && !insertError.message?.includes('duplicate')) {
         throw insertError;
       }
 
-      setProfile(createdProfile);
-      return createdProfile;
+      if (createdProfile) {
+        setProfile(createdProfile);
+        return createdProfile;
+      }
     }
 
     setProfile(data);
     return data;
-  }, [user?.id, metadataFullName, user?.email]);
+  }, [user?.id, user?.email]);
 
   const fetchEmployeeData = useCallback(
     async (profileId: string) => {
@@ -335,10 +350,16 @@ const TimeTracking = () => {
         dateFrom: midnight.toISOString(),
         dateTo: null,
       });
+      
+      // Fetch today's breaks for total count
+      await getBreakHistory(profileId, { page: 1, pageSize: 100 }, {
+        type: null,
+        dateFrom: midnight.toISOString(),
+        dateTo: null,
+      });
     },
-    [getCurrentSession, getActiveBreak, getEmployeeSessions]
+    [getCurrentSession, getActiveBreak, getEmployeeSessions, getBreakHistory]
   );
-
 
   const refreshData = useCallback(async () => {
     if (!user?.id) return;
@@ -420,12 +441,12 @@ const TimeTracking = () => {
       const session = await startSession(sessionNotes || null);
 
       if (session) {
-      toast({
-        title: 'Session started',
-        description: 'Your work session has started successfully.',
-      });
+        toast({
+          title: 'Session started',
+          description: 'Your work session has started successfully.',
+        });
 
-      setSessionNotes('');
+        setSessionNotes('');
         if (user?.id && profile?.id) {
           await getCurrentSession(profile.id);
           await fetchEmployeeData(profile.id);
@@ -526,15 +547,14 @@ const TimeTracking = () => {
       // Breaks are now independent - can start without a session
       // If checked in, optionally link to current session, otherwise break is standalone
       const sessionId = (sessionIsActive && currentSession) ? currentSession.id : null;
-
       const newBreak = await startBreak(breakType, sessionId);
 
       if (newBreak) {
-      const breakLabel = otherBreakLabel || getBreakLabel(breakType);
-      toast({
-        title: `${breakLabel} break started`,
-        description: 'Enjoy your break!',
-      });
+        const breakLabel = otherBreakLabel || getBreakLabel(breakType);
+        toast({
+          title: `${breakLabel} break started`,
+          description: 'Enjoy your break!',
+        });
 
         if (user?.id && profile?.id) {
           await getActiveBreak(profile.id);
@@ -604,12 +624,12 @@ const TimeTracking = () => {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/30 to-slate-100">
       <div className="mx-auto flex max-w-5xl flex-col gap-8 px-6 py-10">
-        <header className="flex flex-col gap-6 rounded-3xl bg-white p-6 shadow-sm md:flex-row md:items-center md:justify-between">
+        <header className="flex flex-col gap-6 rounded-3xl bg-white/80 backdrop-blur-sm p-6 shadow-lg border border-slate-200/50 md:flex-row md:items-center md:justify-between">
           <div>
-            <p className="text-2xl font-semibold text-sky-600">Anvesana</p>
-            <p className="text-sm text-muted-foreground">Welcome, {firstName}.</p>
+            <p className="text-2xl font-bold bg-gradient-to-r from-sky-600 to-blue-600 bg-clip-text text-transparent">Anvesana</p>
+            <p className="text-sm text-slate-600 mt-1">Welcome, {firstName}.</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <Button
@@ -660,79 +680,106 @@ const TimeTracking = () => {
           </Alert>
         )}
 
-        {/* Today's Productive Time Card */}
-        <Card className="border border-emerald-100 bg-gradient-to-br from-emerald-50 to-sky-50 shadow-lg">
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-slate-600">Today's Productive Time</p>
-                <p className="text-xs text-slate-500 mt-1">Tracked since midnight</p>
+        {/* Today's Stats Cards */}
+        <div className="grid gap-6 md:grid-cols-2">
+          {/* Today's Productive Time Card */}
+          <Card className="border-2 border-emerald-200/50 bg-gradient-to-br from-emerald-50 via-green-50 to-teal-50 shadow-xl hover:shadow-2xl transition-shadow duration-300">
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-slate-700">Today's Productive Time</p>
+                  <p className="text-xs text-slate-500 mt-1">Tracked since midnight</p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-full bg-emerald-100">
+                    <Clock className="h-6 w-6 text-emerald-600" />
+                  </div>
+                  <span className="text-3xl font-mono font-bold text-emerald-700 tabular-nums drop-shadow-sm">
+                    {formatTimer(todayProductiveTime)}
+                  </span>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <Clock className="h-5 w-5 text-emerald-600" />
-                <span className="text-3xl font-mono font-bold text-emerald-700 tabular-nums">
-                  {formatTimer(todayProductiveTime)}
-                </span>
+            </CardContent>
+          </Card>
+
+          {/* Today's Total Breaks Card */}
+          <Card className="border-2 border-purple-200/50 bg-gradient-to-br from-purple-50 via-pink-50 to-rose-50 shadow-xl hover:shadow-2xl transition-shadow duration-300">
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-slate-700">Today's Total Breaks</p>
+                  <p className="text-xs text-slate-500 mt-1">Counted since midnight</p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-full bg-purple-100">
+                    <Coffee className="h-6 w-6 text-purple-600" />
+                  </div>
+                  <span className="text-3xl font-mono font-bold text-purple-700 tabular-nums drop-shadow-sm">
+                    {todayTotalBreaks}
+                  </span>
+                </div>
               </div>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        </div>
 
         <section className="grid gap-6 md:grid-cols-2">
-          <Card className="border border-sky-100 bg-white shadow-lg">
+          <Card className="border-2 border-sky-200/50 bg-white/90 backdrop-blur-sm shadow-xl hover:shadow-2xl transition-all duration-300">
             <CardHeader className="pb-4">
-              <CardTitle className="text-lg font-semibold text-slate-800">Work Session</CardTitle>
-              <CardDescription className="text-slate-500">
+              <CardTitle className="text-lg font-bold text-slate-800">Work Session</CardTitle>
+              <CardDescription className="text-slate-600">
                 Start your work day
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-5">
               {sessionIsActive ? (
                 <div className="space-y-4">
-                <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sm">
-                  <p className="font-medium text-slate-700">You are currently checked in.</p>
-                    <div className="mt-3 grid gap-2">
-                      {sessionStartTime && <span className="text-slate-500">Started at {sessionStartTime}</span>}
+                  <div className="rounded-2xl border-2 border-sky-300/50 bg-gradient-to-br from-sky-50 to-blue-50 p-5 text-sm shadow-md">
+                    <p className="font-semibold text-slate-800 mb-3">You are currently checked in.</p>
+                    <div className="mt-3 grid gap-3">
+                      {sessionStartTime && <span className="text-slate-600 text-xs">Started at {sessionStartTime}</span>}
                       {sessionDurationLabel && (
-                        <div className="flex items-center gap-2">
-                          <Clock className="h-4 w-4 text-sky-600" />
-                          <span className="text-2xl font-mono font-semibold text-sky-700 tabular-nums">
+                        <div className="flex items-center gap-3">
+                          <div className="p-2 rounded-lg bg-sky-100">
+                            <Clock className="h-5 w-5 text-sky-600" />
+                          </div>
+                          <span className="text-2xl font-mono font-bold text-sky-700 tabular-nums drop-shadow-sm">
                             {sessionDurationLabel}
                           </span>
-                  </div>
+                        </div>
                       )}
                     </div>
                   </div>
                   
                   {/* Activity Tracking Display */}
                   {!activeBreak && (
-                    <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm">
-                      <div className="flex items-center justify-between mb-3">
-                        <p className="font-medium text-slate-700">Activity Status</p>
-                        <div className="flex items-center gap-2">
+                    <div className="rounded-2xl border-2 border-slate-200/50 bg-gradient-to-br from-white to-slate-50/50 p-5 text-sm shadow-md">
+                      <div className="flex items-center justify-between mb-4">
+                        <p className="font-semibold text-slate-800">Activity Status</p>
+                        <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-100">
                           {activityTracker.isIdle ? (
                             <>
                               <Moon className="h-4 w-4 text-amber-500" />
-                              <span className="text-xs font-medium text-amber-600">Idle</span>
+                              <span className="text-xs font-semibold text-amber-600">Idle</span>
                             </>
                           ) : (
                             <>
                               <Zap className="h-4 w-4 text-emerald-500" />
-                              <span className="text-xs font-medium text-emerald-600">Active</span>
+                              <span className="text-xs font-semibold text-emerald-600">Active</span>
                             </>
                           )}
                         </div>
                       </div>
-                      <div className="grid grid-cols-2 gap-4 pt-2 border-t border-slate-100">
-                        <div>
-                          <p className="text-xs text-slate-500 mb-1">Active Time</p>
-                          <p className="text-lg font-mono font-semibold text-emerald-700 tabular-nums">
+                      <div className="grid grid-cols-2 gap-4 pt-3 border-t-2 border-slate-100">
+                        <div className="p-3 rounded-lg bg-emerald-50/50">
+                          <p className="text-xs text-slate-600 mb-1.5 font-medium">Active Time</p>
+                          <p className="text-lg font-mono font-bold text-emerald-700 tabular-nums">
                             {formatTimer(activityTracker.activeTime)}
                           </p>
                         </div>
-                        <div>
-                          <p className="text-xs text-slate-500 mb-1">Idle Time</p>
-                          <p className="text-lg font-mono font-semibold text-amber-700 tabular-nums">
+                        <div className="p-3 rounded-lg bg-amber-50/50">
+                          <p className="text-xs text-slate-600 mb-1.5 font-medium">Idle Time</p>
+                          <p className="text-lg font-mono font-bold text-amber-700 tabular-nums">
                             {formatTimer(activityTracker.idleTime)}
                           </p>
                         </div>
@@ -741,8 +788,8 @@ const TimeTracking = () => {
                   )}
                 </div>
               ) : (
-                <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600">
-                  <p>You're currently checked out. Add optional notes and tap check in when you're ready.</p>
+                <div className="rounded-2xl border-2 border-dashed border-slate-300/50 bg-gradient-to-br from-slate-50 to-slate-100/50 p-5 text-sm text-slate-600 shadow-inner">
+                  <p className="font-medium">You're currently checked out. Add optional notes and tap check in when you're ready.</p>
                 </div>
               )}
 
@@ -757,10 +804,10 @@ const TimeTracking = () => {
 
               <Button
                 type="button"
-                className={`w-full gap-2 text-base font-medium ${
+                className={`w-full gap-2 text-base font-semibold shadow-lg hover:shadow-xl transition-all duration-300 ${
                   sessionIsActive
-                    ? 'bg-rose-500 hover:bg-rose-500/90 text-white'
-                    : 'bg-sky-500 hover:bg-sky-500/90 text-white'
+                    ? 'bg-gradient-to-r from-rose-500 to-red-500 hover:from-rose-600 hover:to-red-600 text-white'
+                    : 'bg-gradient-to-r from-sky-500 to-blue-500 hover:from-sky-600 hover:to-blue-600 text-white'
                 }`}
                 onClick={(e) => {
                   e.preventDefault();
@@ -795,19 +842,19 @@ const TimeTracking = () => {
 
           {/* Show break tracker when checked out OR when there's an active break */}
           {(!sessionIsActive || activeBreak) && (
-            <Card className="border-none shadow-lg">
+            <Card className="border-2 border-purple-200/50 bg-white/90 backdrop-blur-sm shadow-xl hover:shadow-2xl transition-all duration-300">
               <CardHeader className="pb-4">
-                <CardTitle className="text-lg font-semibold text-slate-800">Break Tracking</CardTitle>
-                <CardDescription>Take a break when needed</CardDescription>
+                <CardTitle className="text-lg font-bold text-slate-800">Break Tracking</CardTitle>
+                <CardDescription className="text-slate-600">Take a break when needed</CardDescription>
               </CardHeader>
               <CardContent className="space-y-5">
                 {activeBreak ? (
                   <>
-                    <div className="rounded-2xl border border-slate-200 bg-sky-50 p-4 text-sm text-slate-700">
-                      <p className="font-medium">
+                    <div className="rounded-2xl border-2 border-purple-300/50 bg-gradient-to-br from-purple-50 to-pink-50 p-5 text-sm text-slate-700 shadow-md">
+                      <p className="font-semibold text-slate-800 mb-2">
                         {getBreakLabel(activeBreak.type)} break in progress
                       </p>
-                      <p className="text-xs text-slate-500">
+                      <p className="text-xs text-slate-600">
                         Started at {formatDateTime(activeBreak.started_at)}
                       </p>
                     </div>
@@ -815,7 +862,7 @@ const TimeTracking = () => {
                     <Button
                       type="button"
                       variant="secondary"
-                      className="w-full gap-2"
+                      className="w-full gap-2 shadow-md hover:shadow-lg transition-all duration-300 font-semibold"
                       disabled={!canEndBreak}
                       onClick={(e) => {
                         e.preventDefault();
@@ -840,13 +887,17 @@ const TimeTracking = () => {
                                   handleStartBreak('other', value);
                                 }}
                               >
-                                <SelectTrigger className="flex h-12 w-full items-center justify-center gap-2 rounded-xl border-slate-200 text-slate-700 shadow-sm transition hover:border-sky-200 hover:bg-sky-50">
+                                <SelectTrigger className="flex h-12 w-full items-center justify-center gap-2 rounded-xl border-2 border-slate-200/50 text-slate-700 shadow-md hover:shadow-lg transition-all duration-300 hover:border-purple-300 hover:bg-gradient-to-br hover:from-purple-50 hover:to-pink-50">
                                   <MoreHorizontal className="h-4 w-4" />
                                   <SelectValue placeholder={option.label} />
                                 </SelectTrigger>
-                                <SelectContent>
+                                <SelectContent className="rounded-xl border-2 border-slate-200/50 bg-white shadow-lg min-w-[var(--radix-select-trigger-width)]">
                                   {OTHER_BREAK_OPTIONS.map((otherOption) => (
-                                    <SelectItem key={otherOption.value} value={otherOption.label}>
+                                    <SelectItem 
+                                      key={otherOption.value} 
+                                      value={otherOption.label}
+                                      className="cursor-pointer rounded-lg px-3 py-2 text-slate-700 hover:bg-gradient-to-br hover:from-purple-50 hover:to-pink-50 focus:bg-gradient-to-br focus:from-purple-50 focus:to-pink-50 transition-colors"
+                                    >
                                       {otherOption.label}
                                     </SelectItem>
                                   ))}
@@ -856,21 +907,21 @@ const TimeTracking = () => {
                           );
                         }
                         return (
-                        <Button
+                          <Button
                             type="button"
-                          key={option.value}
-                          variant="outline"
-                          className="flex h-12 w-full items-center justify-center gap-2 rounded-xl border-slate-200 text-slate-700 shadow-sm transition hover:border-sky-200 hover:bg-sky-50"
-                          disabled={!canStartBreak}
+                            key={option.value}
+                            variant="outline"
+                            className="flex h-12 w-full items-center justify-center gap-2 rounded-xl border-2 border-slate-200/50 text-slate-700 shadow-md hover:shadow-lg transition-all duration-300 hover:border-purple-300 hover:bg-gradient-to-br hover:from-purple-50 hover:to-pink-50 font-medium"
+                            disabled={!canStartBreak}
                             onClick={(e) => {
                               e.preventDefault();
                               e.stopPropagation();
                               handleStartBreak(option.value, undefined, e);
                             }}
-                        >
-                          {renderBreakIcon(option.value)}
-                          {option.label}
-                        </Button>
+                          >
+                            {renderBreakIcon(option.value)}
+                            {option.label}
+                          </Button>
                         );
                       })}
                     </div>
@@ -883,7 +934,7 @@ const TimeTracking = () => {
             </Card>
           )}
         </section>
-                              </div>
+      </div>
 
       {/* Idle Warning Dialog */}
       <Dialog open={showIdleWarning} onOpenChange={setShowIdleWarning}>
@@ -906,11 +957,11 @@ const TimeTracking = () => {
                 <div className="flex justify-between">
                   <span>Active Time:</span>
                   <span className="font-mono font-semibold">{formatTimer(activityTracker.activeTime)}</span>
-                              </div>
+                </div>
                 <div className="flex justify-between">
                   <span>Idle Time:</span>
                   <span className="font-mono font-semibold">{formatTimer(activityTracker.idleTime)}</span>
-      </div>
+                </div>
               </div>
             </div>
             <p className="text-xs text-slate-500 mt-4">
@@ -936,4 +987,3 @@ const TimeTracking = () => {
 };
 
 export default TimeTracking;
-
