@@ -119,7 +119,7 @@ const getBreakLabel = (type: BreakRecord['type']) =>
   BREAK_OPTIONS.find((option) => option.value === type)?.label ?? type;
 
 const PAGE_SIZE = 10;
-const ADMIN_PAGE_SIZE = 8;
+const ADMIN_PAGE_SIZE = 10;
 
 const SessionHistory = () => {
   const { user } = useAuth();
@@ -159,6 +159,13 @@ const SessionHistory = () => {
   const [profilesDirectory, setProfilesDirectory] = useState<Record<string, ProfileRecord>>({});
   const [adminActivityLogsPage, setAdminActivityLogsPage] = useState(0);
   const [adminActivityLogsTotal, setAdminActivityLogsTotal] = useState(0);
+  const [dailyBreaksData, setDailyBreaksData] = useState<Array<{
+    user_id: string;
+    date: string;
+    total_break_seconds: number;
+    break_count: number;
+  }>>([]);
+  const [loadingDailyBreaks, setLoadingDailyBreaks] = useState(false);
 
   // Local filter states
   const [sessionStatusFilter, setSessionStatusFilter] = useState<string>('all');
@@ -228,6 +235,86 @@ const SessionHistory = () => {
     [getEmployeeSessions, getBreakHistory, employeeSessionsPage, breakHistoryPage, sessionStatusFilter, sessionDateFrom, sessionDateTo, breakTypeFilter, breakDateFrom, breakDateTo]
   );
 
+  const fetchDailyBreaks = useCallback(async () => {
+    setLoadingDailyBreaks(true);
+    try {
+      // Get breaks from the last 30 days
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      thirtyDaysAgo.setHours(0, 0, 0, 0);
+
+      // First get all breaks from the last 30 days
+      const { data: breaks, error: breaksError } = await (supabase as any)
+        .from('breaks')
+        .select('id, session_id, started_at, ended_at, duration_seconds')
+        .gte('started_at', thirtyDaysAgo.toISOString())
+        .not('ended_at', 'is', null)
+        .order('started_at', { ascending: false });
+
+      if (breaksError) throw breaksError;
+
+      // Get unique session IDs
+      const sessionIds = [...new Set(breaks?.map((b: any) => b.session_id).filter(Boolean) || [])];
+      
+      // Get sessions with user_id
+      const { data: sessions, error: sessionsError } = await (supabase as any)
+        .from('work_sessions')
+        .select('id, user_id')
+        .in('id', sessionIds);
+
+      if (sessionsError) throw sessionsError;
+
+      // Create a map of session_id to user_id
+      const sessionToUserMap: Record<string, string> = {};
+      sessions?.forEach((session: any) => {
+        sessionToUserMap[session.id] = session.user_id;
+      });
+
+      if (breaksError) throw breaksError;
+
+      // Group breaks by user and date
+      const breaksByUserAndDate: Record<string, {
+        user_id: string;
+        date: string;
+        total_break_seconds: number;
+        break_count: number;
+      }> = {};
+
+      breaks?.forEach((breakItem: any) => {
+        const user_id = sessionToUserMap[breakItem.session_id];
+        if (!user_id) return; // Skip if no user_id found
+
+        const breakDate = new Date(breakItem.started_at);
+        const dateKey = breakDate.toISOString().split('T')[0]; // YYYY-MM-DD
+        const userDateKey = `${user_id}_${dateKey}`;
+
+        if (!breaksByUserAndDate[userDateKey]) {
+          breaksByUserAndDate[userDateKey] = {
+            user_id: user_id,
+            date: dateKey,
+            total_break_seconds: 0,
+            break_count: 0,
+          };
+        }
+
+        const duration = breakItem.duration_seconds || 0;
+        breaksByUserAndDate[userDateKey].total_break_seconds += duration;
+        breaksByUserAndDate[userDateKey].break_count += 1;
+      });
+
+      // Convert to array and sort by date (newest first)
+      const dailyBreaksArray = Object.values(breaksByUserAndDate).sort((a, b) => {
+        return new Date(b.date).getTime() - new Date(a.date).getTime();
+      });
+
+      setDailyBreaksData(dailyBreaksArray);
+    } catch (error: any) {
+      console.error('Error fetching daily breaks:', error);
+    } finally {
+      setLoadingDailyBreaks(false);
+    }
+  }, []);
+
   const fetchAdminData = useCallback(async () => {
     try {
       const profilesRes = await supabase
@@ -245,10 +332,11 @@ const SessionHistory = () => {
 
       await getAdminActiveSessions();
       await getAdminRecentSessions({ page: adminRecentSessionsPage, pageSize: ADMIN_PAGE_SIZE });
+      await fetchDailyBreaks();
     } catch (error: any) {
       throw error;
     }
-  }, [adminRecentSessionsPage, getAdminActiveSessions, getAdminRecentSessions]);
+  }, [adminRecentSessionsPage, getAdminActiveSessions, getAdminRecentSessions, fetchDailyBreaks]);
 
   useEffect(() => {
     const loadData = async () => {
@@ -1012,6 +1100,60 @@ const SessionHistory = () => {
               </CardFooter>
             )}
           </Card>
+
+          <Card className="border-none shadow-lg">
+            <CardHeader>
+              <CardTitle>Daily Break Time</CardTitle>
+              <CardDescription>Total break time per employee per day (last 30 days)</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {loadingDailyBreaks ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+                </div>
+              ) : dailyBreaksData.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No break data available.</p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Employee</TableHead>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Total Break Time</TableHead>
+                      <TableHead>Break Count</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {dailyBreaksData.map((item, index) => {
+                      const employee = profilesDirectory[item.user_id];
+                      const date = new Date(item.date);
+                      const formattedDate = date.toLocaleDateString('en-US', {
+                        year: 'numeric',
+                        month: 'short',
+                        day: 'numeric',
+                      });
+                      return (
+                        <TableRow key={`${item.user_id}_${item.date}_${index}`}>
+                          <TableCell>
+                            <div className="flex flex-col">
+                              <span className="font-medium">
+                                {employee?.email ?? 'Unknown user'}
+                              </span>
+                            </div>
+                          </TableCell>
+                          <TableCell>{formattedDate}</TableCell>
+                          <TableCell className="font-mono">
+                            {formatDuration(item.total_break_seconds)}
+                          </TableCell>
+                          <TableCell>{item.break_count}</TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
         </section>
       )}
     </div>
@@ -1019,4 +1161,10 @@ const SessionHistory = () => {
 };
 
 export default SessionHistory;
+
+
+
+
+
+
 

@@ -3,7 +3,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Loader2, Lock } from 'lucide-react'
+import { Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -13,8 +13,8 @@ import { ROUTES_FRONTEND } from '../constant'
 import { useToast } from '@/hooks/use-toast'
 
 const loginSchema = z.object({
-  email: z.string().email('Invalid email').nonempty('Email is required'),
-  password: z.string().min(6, 'Minimum 6 characters'),
+  email: z.string().email('Invalid email').min(1, 'Email is required'),
+  password: z.string().min(6, 'Password must be at least 6 characters'),
 })
 
 type LoginFormData = z.infer<typeof loginSchema>
@@ -42,7 +42,16 @@ export default function LoginForm() {
       })
 
       if (error) {
-        console.log('error', error)
+        // Handle email not confirmed error
+        if (error.code === 'email_not_confirmed' || error.message?.includes('Email not confirmed')) {
+          toast({
+            title: "Email Not Confirmed",
+            description: "Please check your email and click the confirmation link before signing in.",
+            variant: "destructive",
+          })
+          return
+        }
+        
         toast({
           title: "Error",
           description: error.message,
@@ -59,10 +68,10 @@ export default function LoginForm() {
         })
         navigate(ROUTES_FRONTEND.HOME)
       }
-    } catch {
+    } catch (error: any) {
       toast({
         title: "Error",
-        description: "Something went wrong.",
+        description: "Something went wrong. Please try again.",
         variant: "destructive",
       })
     } finally {
@@ -85,7 +94,7 @@ export default function LoginForm() {
               type="email"
               placeholder="Enter your email"
               {...register('email')}
-              className={errors.email && 'border-red-500'}
+              className={errors.email ? 'border-red-500' : ''}
             />
             {errors.email && <p className="text-sm text-red-500">{errors.email.message}</p>}
           </div>
@@ -97,7 +106,7 @@ export default function LoginForm() {
               type="password"
               placeholder="••••••••"
               {...register('password')}
-              className={errors.password && 'border-red-500'}
+              className={errors.password ? 'border-red-500' : ''}
             />
             {errors.password && <p className="text-sm text-red-500">{errors.password.message}</p>}
           </div>
@@ -117,6 +126,19 @@ export default function LoginForm() {
             )}
           </Button>
         </form>
+
+        <div className="mt-6 text-center">
+          <p className="text-sm text-gray-600 dark:text-gray-400">
+            Don't have an account?{' '}
+            <Button
+              variant="link"
+              className="p-0 h-auto text-purple-600 hover:text-purple-700 dark:text-purple-400 dark:hover:text-purple-300"
+              onClick={() => navigate('/signup')}
+            >
+              Sign up
+            </Button>
+          </p>
+        </div>
       </CardContent>
     </Card>
   )

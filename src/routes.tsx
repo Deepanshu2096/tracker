@@ -3,7 +3,6 @@ import { ROUTES_FRONTEND } from './constant';
 
 import Login from './components/pages/Login';
 import Signup from './components/pages/Signup';
-import Invite from './components/pages/Invite';
 import Layout from './components/utils/Layout';
 
 import Dashboard from './components/pages/Dashboard'
@@ -24,10 +23,6 @@ export const router = createBrowserRouter([
   {
     path: "/signup",
     element: <Signup />,
-  },
-  {
-    path: "/invite/:token",
-    element: <Invite />,
   },
   {
     path: "/",

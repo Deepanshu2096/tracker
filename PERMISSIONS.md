@@ -26,3 +26,9 @@ If the app doesn't appear in the Accessibility list automatically, you may need 
 
 On Windows and Linux, system-wide tracking should work without additional permissions, though administrative privileges may be required in some cases.
 
+
+
+
+
+
+

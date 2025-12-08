@@ -39,6 +39,7 @@ interface ActivityLogState {
   getActivityLogs: (pagination?: PaginationParams) => Promise<void>;
   getProfiles: () => Promise<void>;
   setPage: (page: number) => void;
+  setPageSize: (pageSize: number) => void;
   clearLogs: () => void;
   clearError: () => void;
 }
@@ -51,7 +52,7 @@ export const useActivityLogStore = create<ActivityLogState>((set, get) => ({
   error: null,
   page: 0,
   total: 0,
-  pageSize: 20,
+  pageSize: 10,
 
   // Actions
   getProfiles: async () => {
@@ -88,7 +89,7 @@ export const useActivityLogStore = create<ActivityLogState>((set, get) => ({
 
     try {
       const page = pagination?.page ?? get().page;
-      const pageSize = pagination?.pageSize ?? get().pageSize ?? 20;
+      const pageSize = pagination?.pageSize ?? get().pageSize ?? 10;
       const from = page * pageSize;
       const to = from + pageSize - 1;
 
@@ -137,6 +138,10 @@ export const useActivityLogStore = create<ActivityLogState>((set, get) => ({
 
   setPage: (page: number) => {
     set({ page });
+  },
+
+  setPageSize: (pageSize: number) => {
+    set({ pageSize, page: 0 }); // Reset to first page when changing page size
   },
 
   clearLogs: () => {

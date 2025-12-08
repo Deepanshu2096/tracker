@@ -8,6 +8,7 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  CardFooter,
 } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -21,6 +22,14 @@ import {
 } from '@/components/ui/table';
 import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from '@/components/ui/pagination';
 
 const formatDate = (dateString: string) => {
   const date = new Date(dateString);
@@ -52,10 +61,13 @@ const Attendance = () => {
     thirtyDaysAgo.toISOString().split('T')[0]
   );
   const [endDate, setEndDate] = useState<string>(today.toISOString().split('T')[0]);
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10; // Number of days to show per page
 
   useEffect(() => {
     if (startDate && endDate) {
       getAttendanceData(startDate, endDate);
+      setCurrentPage(1); // Reset to first page when date range changes
     }
   }, [startDate, endDate, getAttendanceData]);
 
@@ -107,6 +119,25 @@ const Attendance = () => {
         return <Badge variant="destructive">Miss</Badge>;
       default:
         return <Badge variant="outline">{status}</Badge>;
+    }
+  };
+
+  // Pagination logic
+  const totalPages = useMemo(() => {
+    return Math.max(1, Math.ceil(attendanceData.length / itemsPerPage));
+  }, [attendanceData.length]);
+
+  const paginatedData = useMemo(() => {
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    const endIndex = startIndex + itemsPerPage;
+    return attendanceData.slice(startIndex, endIndex);
+  }, [attendanceData, currentPage]);
+
+  const handlePageChange = (page: number) => {
+    if (page >= 1 && page <= totalPages) {
+      setCurrentPage(page);
+      // Scroll to top of the attendance records section
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   };
 
@@ -234,45 +265,113 @@ const Attendance = () => {
           </CardContent>
         </Card>
       ) : (
-        attendanceData.map((day) => (
-          <Card key={day.date} className="border-none shadow-lg">
-            <CardHeader>
-              <CardTitle>{formatDate(day.date)}</CardTitle>
-              <CardDescription>{day.employees.length} {day.employees.length === 1 ? 'employee' : 'employees'}</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Employee</TableHead>
-                    <TableHead>Email</TableHead>
-                    <TableHead>Hours Worked</TableHead>
-                    <TableHead>Sessions</TableHead>
-                    <TableHead>Status</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {day.employees.map((emp) => (
-                    <TableRow key={emp.userId}>
-                      <TableCell className="font-medium">
-                        {emp.email?.split('@')[0] || 'Unknown'}
-                      </TableCell>
-                      <TableCell className="text-slate-500">{emp.email || '—'}</TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <Clock className="h-4 w-4 text-slate-400" />
-                          <span>{emp.hoursWorked.toFixed(2)}h</span>
-                        </div>
-                      </TableCell>
-                      <TableCell>{emp.sessions}</TableCell>
-                      <TableCell>{getStatusBadge(emp.status)}</TableCell>
+        <>
+          {paginatedData.map((day) => (
+            <Card key={day.date} className="border-none shadow-lg">
+              <CardHeader>
+                <CardTitle>{formatDate(day.date)}</CardTitle>
+                <CardDescription>{day.employees.length} {day.employees.length === 1 ? 'employee' : 'employees'}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Employee</TableHead>
+                      <TableHead>Email</TableHead>
+                      <TableHead>Hours Worked</TableHead>
+                      <TableHead>Sessions</TableHead>
+                      <TableHead>Status</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-        ))
+                  </TableHeader>
+                  <TableBody>
+                    {day.employees.map((emp) => (
+                      <TableRow key={emp.userId}>
+                        <TableCell className="font-medium">
+                          {emp.email?.split('@')[0] || 'Unknown'}
+                        </TableCell>
+                        <TableCell className="text-slate-500">{emp.email || '—'}</TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <Clock className="h-4 w-4 text-slate-400" />
+                            <span>{emp.hoursWorked.toFixed(2)}h</span>
+                          </div>
+                        </TableCell>
+                        <TableCell>{emp.sessions}</TableCell>
+                        <TableCell>{getStatusBadge(emp.status)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          ))}
+
+          {/* Pagination */}
+          {attendanceData.length > itemsPerPage && (
+            <Card className="border-none shadow-lg">
+              <CardFooter className="flex items-center justify-between border-t border-slate-100 px-6 py-4">
+                <div className="text-sm text-slate-500">
+                  Showing {((currentPage - 1) * itemsPerPage) + 1} to {Math.min(currentPage * itemsPerPage, attendanceData.length)} of {attendanceData.length} days
+                </div>
+                <Pagination>
+                  <PaginationContent>
+                    <PaginationItem>
+                      <PaginationPrevious
+                        href="#"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          handlePageChange(currentPage - 1);
+                        }}
+                        className={currentPage === 1 ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
+                      />
+                    </PaginationItem>
+                    {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => {
+                      // Show first page, last page, current page, and pages around current
+                      if (
+                        page === 1 ||
+                        page === totalPages ||
+                        (page >= currentPage - 1 && page <= currentPage + 1)
+                      ) {
+                        return (
+                          <PaginationItem key={page}>
+                            <PaginationLink
+                              href="#"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                handlePageChange(page);
+                              }}
+                              isActive={page === currentPage}
+                              className="cursor-pointer"
+                            >
+                              {page}
+                            </PaginationLink>
+                          </PaginationItem>
+                        );
+                      } else if (page === currentPage - 2 || page === currentPage + 2) {
+                        return (
+                          <PaginationItem key={page}>
+                            <span className="px-2">...</span>
+                          </PaginationItem>
+                        );
+                      }
+                      return null;
+                    })}
+                    <PaginationItem>
+                      <PaginationNext
+                        href="#"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          handlePageChange(currentPage + 1);
+                        }}
+                        className={currentPage === totalPages ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
+                      />
+                    </PaginationItem>
+                  </PaginationContent>
+                </Pagination>
+              </CardFooter>
+            </Card>
+          )}
+        </>
       )}
     </div>
   );

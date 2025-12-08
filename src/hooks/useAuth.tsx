@@ -69,11 +69,21 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         
         // Race with a timeout to prevent hanging
         const timeoutPromise = new Promise<{ data: { session: null }, error: null }>((resolve) => {
-          setTimeout(() => resolve({ data: { session: null }, error: null }), 3000);
+          setTimeout(() => resolve({ data: { session: null }, error: null }), 5000);
         });
 
         const result = await Promise.race([sessionPromise, timeoutPromise]);
         const { data: { session }, error } = result as any;
+        
+        // Handle network errors gracefully
+        if (error && (error.message?.includes('hostname') || error.message?.includes('could not be found') || error.message?.includes('Failed to fetch'))) {
+          console.error('❌ Supabase connection error:', error.message);
+          console.error('💡 Please check:');
+          console.error('   1. Your internet connection');
+          console.error('   2. Supabase project URL in .env file');
+          console.error('   3. If your Supabase project is active (not paused)');
+          // Don't throw, just log and continue without session
+        }
 
         if (!mounted) return;
 
